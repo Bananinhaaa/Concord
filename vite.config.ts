@@ -7,8 +7,14 @@ export default defineConfig({
   base: '/',
   build: {
     outDir: 'dist',
+    chunkSizeWarningLimit: 1000, // Aumenta o limite para 1000kb para silenciar o aviso
     rollupOptions: {
-      input: './index.html'
+      input: './index.html',
+      output: {
+        manualChunks: {
+          vendor: ['react', 'react-dom', 'peerjs', '@google/genai']
+        }
+      }
     }
   },
   server: {
