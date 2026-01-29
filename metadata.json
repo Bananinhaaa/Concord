@@ -1,0 +1,8 @@
+{
+  "name": "Concord Messenger",
+  "description": "Uma plataforma de mensagens em tempo real com suporte a temas, perfis customizáveis e sincronização entre abas.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
