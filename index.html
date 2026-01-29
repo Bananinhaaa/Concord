@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Concord | Noir Edition</title>
+    <title>Concord | Noir Peak Edition</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <script>
@@ -38,24 +38,44 @@
           font-family: 'Plus Jakarta Sans', sans-serif;
         }
         .glass {
-          background: rgba(255, 255, 255, 0.03);
-          backdrop-filter: blur(20px);
-          -webkit-backdrop-filter: blur(20px);
-          border: 1px solid rgba(255, 255, 255, 0.08);
+          background: rgba(255, 255, 255, 0.02);
+          backdrop-filter: blur(50px);
+          -webkit-backdrop-filter: blur(50px);
+          border: 1px solid rgba(255, 255, 255, 0.05);
         }
         .noir-button {
           background: white;
           color: black;
-          transition: all 0.2s ease;
+          transition: all 0.4s cubic-bezier(0.19, 1, 0.22, 1);
           border: none;
           cursor: pointer;
+          box-shadow: 0 4px 20px rgba(255,255,255,0.05);
         }
         .noir-button:hover {
-          background: #e5e5e5;
-          transform: translateY(-1px);
+          background: #ffffff;
+          transform: translateY(-4px) scale(1.02);
+          box-shadow: 0 15px 50px rgba(255,255,255,0.2);
         }
-        ::-webkit-scrollbar { width: 3px; }
-        ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 10px; }
+        .noir-button:active { transform: scale(0.96); }
+        
+        .custom-scrollbar::-webkit-scrollbar { width: 3px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 10px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.15); }
+        
+        .animate-in { animation: fadeInScale 0.6s cubic-bezier(0.19, 1, 0.22, 1); }
+        @keyframes fadeInScale { from { opacity: 0; transform: translateY(20px) scale(0.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
+
+        /* Efeito de shimmer sutil */
+        .shimmer {
+          background: linear-gradient(90deg, transparent, rgba(255,255,255,0.05), transparent);
+          background-size: 200% 100%;
+          animation: shimmer 3s infinite linear;
+        }
+        @keyframes shimmer {
+          0% { background-position: -200% 0; }
+          100% { background-position: 200% 0; }
+        }
     </style>
 <script type="importmap">
 {
@@ -69,7 +89,7 @@
 }
 </script>
 </head>
-<body class="h-screen w-full">
+<body class="h-screen w-full selection:bg-white selection:text-black">
     <div id="root" class="h-full w-full"></div>
     <script type="module" src="/index.tsx"></script>
 </body>
