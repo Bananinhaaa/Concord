@@ -1,10 +1,10 @@
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Message, Contact, UserProfile } from './types';
 import Peer, { DataConnection } from 'peerjs';
 import { generateAIResponse } from './geminiService';
 
-// Endpoint público para registro temporário de nodos (simula um banco de dados global)
+// Fallback registry em caso de instabilidade na API externa
 const REGISTRY_API = "https://jsonblob.com/api/jsonBlob/1344426563725705216"; 
 
 const NOTIFICATION_SOUND = 'https://assets.mixkit.co/active_storage/sfx/2358/2358-preview.mp3';
@@ -15,7 +15,6 @@ const Logo: React.FC<{ className?: string, size?: 'sm' | 'md' | 'lg', syncing?: 
   return (
     <div className={`flex flex-col items-center justify-center gap-4 ${className}`}>
       <div className={`relative ${containerSize} group cursor-pointer`}>
-        {/* The Apex Logo - Faceted Diamond Noir */}
         <div className={`absolute inset-0 bg-white opacity-10 rounded-xl transition-all duration-1000 ${syncing ? 'animate-ping' : 'rotate-45'}`}></div>
         <div className="absolute inset-0 bg-gradient-to-tr from-white/20 to-transparent rounded-xl rotate-12 opacity-20"></div>
         <div className="relative h-full w-full bg-black border border-white/20 rounded-xl flex items-center justify-center overflow-hidden shadow-2xl">
@@ -39,50 +38,65 @@ const Logo: React.FC<{ className?: string, size?: 'sm' | 'md' | 'lg', syncing?: 
 };
 
 const App: React.FC = () => {
-  const [isLoggedIn, setIsLoggedIn] = useState(() => localStorage.getItem('concord_logged') === 'true');
+  const [isLoggedIn, setIsLoggedIn] = useState(() => {
+    try {
+      return localStorage.getItem('concord_logged') === 'true';
+    } catch {
+      return false;
+    }
+  });
+  
   const [activeTab, setActiveTab] = useState<'chats' | 'add-friends' | 'settings'>('chats');
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [searchQuery, setSearchQuery] = useState('');
   const [isSyncing, setIsSyncing] = useState(false);
   const [globalUsers, setGlobalUsers] = useState<UserProfile[]>([]);
   const [connections, setConnections] = useState<Record<string, DataConnection>>({});
   
   const [profile, setProfile] = useState<UserProfile>(() => {
-    const saved = localStorage.getItem('concord_profile');
-    return saved ? JSON.parse(saved) : {
-      id: '', // Será preenchido pelo PeerJS
-      username: '',
-      name: '',
-      avatar: `https://api.dicebear.com/7.x/shapes/svg?seed=${Math.random()}`,
-      bio: 'Ecoando no Noir Peak.',
-      phoneNumber: '',
-      theme: 'dark'
-    };
+    try {
+      const saved = localStorage.getItem('concord_profile');
+      return saved ? JSON.parse(saved) : {
+        id: '',
+        username: '',
+        name: '',
+        avatar: `https://api.dicebear.com/7.x/shapes/svg?seed=${Math.random()}`,
+        bio: 'Ecoando no Noir Peak.',
+        phoneNumber: '',
+        theme: 'dark'
+      };
+    } catch {
+      return { id: '', username: '', name: '', avatar: '', bio: '', phoneNumber: '', theme: 'dark' };
+    }
   });
 
   const [contacts, setContacts] = useState<Contact[]>(() => {
-    const saved = localStorage.getItem('concord_contacts');
-    const initial = saved ? JSON.parse(saved) : [];
-    
-    // Add Gemini AI as a default persistent contact
-    const aiContact: Contact = {
-      id: 'concord_gemini_ai',
-      username: 'gemini',
-      name: 'Concord AI',
-      avatar: 'https://api.dicebear.com/7.x/bottts/svg?seed=gemini&backgroundColor=000000',
-      status: 'online',
-      bio: 'O oráculo silencioso do Noir Peak.'
-    };
-
-    if (!initial.some((c: Contact) => c.id === aiContact.id)) {
-      initial.unshift(aiContact);
+    try {
+      const saved = localStorage.getItem('concord_contacts');
+      const initial = saved ? JSON.parse(saved) : [];
+      const aiContact: Contact = {
+        id: 'concord_gemini_ai',
+        username: 'gemini',
+        name: 'Concord AI',
+        avatar: 'https://api.dicebear.com/7.x/bottts/svg?seed=gemini&backgroundColor=000000',
+        status: 'online',
+        bio: 'O oráculo silencioso do Noir Peak.'
+      };
+      if (!initial.some((c: Contact) => c.id === aiContact.id)) {
+        initial.unshift(aiContact);
+      }
+      return initial;
+    } catch {
+      return [];
     }
-    return initial;
   });
 
   const [messages, setMessages] = useState<Message[]>(() => {
-    const saved = localStorage.getItem('concord_messages');
-    return saved ? JSON.parse(saved) : [];
+    try {
+      const saved = localStorage.getItem('concord_messages');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
   });
 
   const [inputValue, setInputValue] = useState('');
@@ -94,56 +108,19 @@ const App: React.FC = () => {
     audioRef.current.volume = 0.3;
   }, []);
 
-  // Inicialização do PeerJS
-  useEffect(() => {
-    if (isLoggedIn && profile.username) {
-      const peerId = `concord_${profile.username.toLowerCase()}`;
-      const peer = new Peer(peerId);
-      
-      peer.on('open', (id) => {
-        console.log('Nodo Conectado:', id);
-        setProfile(p => ({ ...p, id }));
-        announcePresence(id);
-      });
-
-      peer.on('connection', (conn) => {
-        conn.on('data', (data: any) => {
-          if (data.type === 'message') {
-            const msg = data.payload as Message;
-            setMessages(prev => [...prev, msg]);
-            audioRef.current?.play().catch(() => {});
-            
-            // Se não tivermos o contato, adicionar
-            setContacts(prev => {
-              if (prev.find(c => c.id === msg.senderId)) return prev;
-              return [...prev, {
-                id: msg.senderId,
-                name: msg.senderName,
-                username: msg.senderId.replace('concord_', ''),
-                avatar: `https://api.dicebear.com/7.x/shapes/svg?seed=${msg.senderId}`,
-                status: 'online'
-              } as Contact];
-            });
-          }
-        });
-        setConnections(prev => ({ ...prev, [conn.peer]: conn }));
-      });
-
-      peerRef.current = peer;
-      return () => peer.destroy();
-    }
-  }, [isLoggedIn, profile.username]);
-
-  // Função para anunciar presença globalmente (simulado)
-  const announcePresence = async (id: string) => {
+  const announcePresence = useCallback(async (id: string) => {
     setIsSyncing(true);
     try {
-      const res = await fetch(REGISTRY_API);
+      const res = await fetch(REGISTRY_API, { 
+        method: 'GET',
+        headers: { 'Accept': 'application/json' },
+        cache: 'no-cache' 
+      });
+      if (!res.ok) throw new Error("Registry server down");
       const data = await res.json();
-      const users = data.users || [];
+      const users = Array.isArray(data.users) ? data.users : [];
       
-      // Remove entradas antigas do mesmo usuário
-      const filtered = users.filter((u: any) => u.username !== profile.username && Date.now() - u.lastSeen < 3600000);
+      const filtered = users.filter((u: any) => u.username !== profile.username && Date.now() - (u.lastSeen || 0) < 3600000);
       
       filtered.push({
         id,
@@ -159,20 +136,67 @@ const App: React.FC = () => {
         body: JSON.stringify({ users: filtered })
       });
     } catch (e) {
-      console.warn("Erro ao anunciar no Nodo Global:", e);
+      console.warn("Registry bypass active. Network error or CORS block.");
     } finally {
       setIsSyncing(false);
     }
-  };
+  }, [profile.name, profile.username, profile.avatar]);
+
+  useEffect(() => {
+    if (isLoggedIn && profile.username && !peerRef.current) {
+      const peerId = `concord_${profile.username.toLowerCase()}`;
+      const peer = new Peer(peerId);
+      
+      peer.on('open', (id) => {
+        setProfile(p => ({ ...p, id }));
+        announcePresence(id);
+      });
+
+      peer.on('connection', (conn) => {
+        conn.on('data', (data: any) => {
+          if (data.type === 'message') {
+            const msg = data.payload as Message;
+            setMessages(prev => [...prev, msg]);
+            audioRef.current?.play().catch(() => {});
+            
+            setContacts(prev => {
+              if (prev.find(c => c.id === msg.senderId)) return prev;
+              return [...prev, {
+                id: msg.senderId,
+                name: msg.senderName,
+                username: msg.senderId.replace('concord_', ''),
+                avatar: `https://api.dicebear.com/7.x/shapes/svg?seed=${msg.senderId}`,
+                status: 'online'
+              } as Contact];
+            });
+          }
+        });
+        setConnections(prev => ({ ...prev, [conn.peer]: conn }));
+      });
+
+      peer.on('error', (err) => {
+        console.error("P2P Signaling Error:", err);
+      });
+
+      peerRef.current = peer;
+      return () => {
+        if (peerRef.current) {
+          peerRef.current.destroy();
+          peerRef.current = null;
+        }
+      };
+    }
+  }, [isLoggedIn, profile.username, announcePresence]);
 
   const fetchGlobalUsers = async () => {
     setIsSyncing(true);
     try {
-      const res = await fetch(REGISTRY_API);
+      const res = await fetch(REGISTRY_API, { cache: 'no-cache' });
+      if (!res.ok) throw new Error();
       const data = await res.json();
-      setGlobalUsers(data.users || []);
+      setGlobalUsers(Array.isArray(data.users) ? data.users : []);
     } catch (e) {
-      console.error("Erro ao buscar nodos globais", e);
+      setGlobalUsers([]); 
     } finally {
       setIsSyncing(false);
     }
@@ -180,10 +204,14 @@ const App: React.FC = () => {
 
   useEffect(() => {
     if (isLoggedIn) {
-      localStorage.setItem('concord_profile', JSON.stringify(profile));
-      localStorage.setItem('concord_logged', 'true');
-      localStorage.setItem('concord_contacts', JSON.stringify(contacts));
-      localStorage.setItem('concord_messages', JSON.stringify(messages));
+      try {
+        localStorage.setItem('concord_profile', JSON.stringify(profile));
+        localStorage.setItem('concord_logged', 'true');
+        localStorage.setItem('concord_contacts', JSON.stringify(contacts));
+        localStorage.setItem('concord_messages', JSON.stringify(messages));
+      } catch (e) {
+        console.warn("Sync local fail");
+      }
     }
   }, [profile, isLoggedIn, contacts, messages]);
 
@@ -192,7 +220,6 @@ const App: React.FC = () => {
     if (profile.name && profile.username) setIsLoggedIn(true);
   };
 
-  // Fix: Implemented startChat to allow adding new contacts from the Global Registry.
   const startChat = (user: UserProfile) => {
     setContacts(prev => {
       if (prev.find(c => c.id === user.id)) return prev;
@@ -226,7 +253,6 @@ const App: React.FC = () => {
     setMessages(prev => [...prev, newMessage]);
     setInputValue('');
 
-    // Handle Gemini AI interaction logic
     if (activeId === 'concord_gemini_ai') {
       const aiResponseText = await generateAIResponse(userText);
       const aiMessage: Message = {
@@ -242,13 +268,10 @@ const App: React.FC = () => {
       return;
     }
 
-    // Tentar enviar via PeerJS para contatos P2P
     let conn = connections[activeId];
     if (!conn && peerRef.current) {
       conn = peerRef.current.connect(activeId);
       setConnections(prev => ({ ...prev, [activeId]: conn }));
-      
-      // Assured sending once the Peer connection is open
       conn.on('open', () => {
         conn.send({ type: 'message', payload: newMessage });
       });
@@ -261,7 +284,7 @@ const App: React.FC = () => {
     return (
       <div className="h-screen w-full flex flex-col items-center justify-center bg-black p-6">
         <Logo className="mb-20" size="lg" />
-        <div className="w-full max-w-sm glass p-10 rounded-[3rem] border border-white/5 shadow-2xl">
+        <div className="w-full max-sm glass p-10 rounded-[3rem] border border-white/5 shadow-2xl">
           <form onSubmit={handleLogin} className="space-y-6">
             <h2 className="text-[10px] font-bold mb-8 text-center uppercase tracking-[0.5em] opacity-40">Identidade P2P</h2>
             <input required placeholder="Seu Nome" value={profile.name} onChange={e => setProfile({...profile, name: e.target.value})} className="w-full bg-zinc-900 border border-white/10 p-5 rounded-2xl outline-none text-white focus:border-white/30 transition-all" />
@@ -281,7 +304,6 @@ const App: React.FC = () => {
 
   return (
     <div className="h-screen w-full flex p-6 gap-6 bg-black text-white selection:bg-white selection:text-black">
-      {/* Mini Sidebar */}
       <nav className="w-24 glass rounded-[3.5rem] flex flex-col items-center py-12 gap-10 shrink-0 border border-white/5">
         <Logo size="sm" syncing={isSyncing} />
         <div className="flex flex-col gap-8">
@@ -333,7 +355,7 @@ const App: React.FC = () => {
               <div className="flex justify-between items-center mb-16">
                 <div>
                   <h2 className="text-6xl font-black tracking-tighter">Global Registry</h2>
-                  <p className="text-[10px] font-bold uppercase tracking-[0.5em] text-zinc-600 mt-4">Buscando nodos ativos ao redor do mundo</p>
+                  <p className="text-[10px] font-bold uppercase tracking-[0.5em] text-zinc-600 mt-4">Nodos ativos no Noir Peak</p>
                 </div>
                 <button onClick={fetchGlobalUsers} className="p-4 border border-white/10 rounded-2xl hover:bg-white/5">
                   <svg className={`w-5 h-5 ${isSyncing ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
@@ -343,7 +365,7 @@ const App: React.FC = () => {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {globalUsers.filter(u => u.id !== profile.id).length === 0 ? (
                   <div className="col-span-2 p-20 text-center border-2 border-dashed border-white/5 rounded-[3rem] opacity-20">
-                    <p className="text-xs font-bold uppercase tracking-widest">O deserto digital está vazio.</p>
+                    <p className="text-xs font-bold uppercase tracking-widest">O deserto digital está em silêncio.</p>
                   </div>
                 ) : (
                   globalUsers.filter(u => u.id !== profile.id).map(u => (
@@ -387,7 +409,7 @@ const App: React.FC = () => {
 
               <div className="p-12 pt-0">
                 <form onSubmit={sendMessage} className="glass rounded-[2.5rem] p-3 flex items-center gap-4">
-                  <input value={inputValue} onChange={e => setInputValue(e.target.value)} placeholder="Sussurre para o Nodo..." className="flex-1 bg-transparent border-none outline-none px-6 py-3 text-lg" />
+                  <input value={inputValue} onChange={e => setInputValue(e.target.value)} placeholder="Sussurre para o Nodo..." className="flex-1 bg-transparent border-none opacity-100 outline-none px-6 py-3 text-lg" />
                   <button type="submit" className="w-14 h-14 bg-white text-black rounded-2xl flex items-center justify-center hover:scale-105 transition-all">
                     <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="3" d="M14 5l7 7m0 0l-7 7m7-7H3" /></svg>
                   </button>
