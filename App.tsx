@@ -107,41 +107,56 @@ const App: React.FC = () => {
     audioRef.current.volume = 0.3;
   }, []);
 
-  const announcePresence = useCallback(async (id: string) => {
+  // Função robusta de anúncio de presença
+  const announcePresence = useCallback(async (forcedId?: string) => {
+    const currentId = forcedId || profile.id;
+    if (!currentId || !profile.username) return;
+    
     setIsSyncing(true);
     try {
-      const res = await fetch(REGISTRY_API, { 
-        method: 'GET',
-        headers: { 'Accept': 'application/json' },
-        cache: 'no-cache' 
-      });
-      if (!res.ok) throw new Error("Registry server down");
+      const res = await fetch(REGISTRY_API, { cache: 'no-cache' });
       const data = await res.json();
       const users = Array.isArray(data.users) ? data.users : [];
       
-      const filtered = users.filter((u: any) => u.username !== profile.username && Date.now() - (u.lastSeen || 0) < 3600000);
+      // Remove versões antigas de mim mesmo e usuários offline há mais de 10 min
+      const now = Date.now();
+      const otherUsers = users.filter((u: any) => 
+        u.username !== profile.username && 
+        u.id !== currentId &&
+        (now - (u.lastSeen || 0) < 600000) 
+      );
       
-      filtered.push({
-        id,
+      const me = {
+        id: currentId,
         name: profile.name,
         username: profile.username,
         avatar: profile.avatar,
         bio: profile.bio,
-        lastSeen: Date.now()
-      });
+        lastSeen: now
+      };
 
       await fetch(REGISTRY_API, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ users: filtered })
+        body: JSON.stringify({ users: [...otherUsers, me] })
       });
+      console.log("Nodo anunciado com sucesso.");
     } catch (e) {
-      console.warn("Registry bypass active.");
+      console.error("Erro ao anunciar presença:", e);
     } finally {
       setIsSyncing(false);
     }
-  }, [profile.name, profile.username, profile.avatar, profile.bio]);
+  }, [profile.id, profile.name, profile.username, profile.avatar, profile.bio]);
 
+  // Heartbeat: atualiza presença a cada 30 segundos enquanto logado
+  useEffect(() => {
+    if (isLoggedIn && profile.id) {
+      const interval = setInterval(() => announcePresence(), 30000);
+      return () => clearInterval(interval);
+    }
+  }, [isLoggedIn, profile.id, announcePresence]);
+
+  // Inicialização do Peer
   useEffect(() => {
     if (isLoggedIn && profile.username && !peerRef.current) {
       const peerId = `concord_${profile.username.toLowerCase()}`;
@@ -174,6 +189,14 @@ const App: React.FC = () => {
         setConnections(prev => ({ ...prev, [conn.peer]: conn }));
       });
 
+      peer.on('error', (err) => {
+        console.error("PeerJS Error:", err);
+        if (err.type === 'unavailable-id') {
+          alert("Este @username já está ativo em outro dispositivo. Por favor, use um nome diferente.");
+          handleLogout();
+        }
+      });
+
       peerRef.current = peer;
       return () => {
         if (peerRef.current) {
@@ -189,7 +212,10 @@ const App: React.FC = () => {
     try {
       const res = await fetch(REGISTRY_API, { cache: 'no-cache' });
       const data = await res.json();
-      setGlobalUsers(Array.isArray(data.users) ? data.users : []);
+      const users = Array.isArray(data.users) ? data.users : [];
+      // Filtra usuários que não deram sinal nos últimos 10 minutos
+      const active = users.filter((u: any) => (Date.now() - (u.lastSeen || 0)) < 600000);
+      setGlobalUsers(active);
     } catch (e) {
       setGlobalUsers([]); 
     } finally {
@@ -219,6 +245,10 @@ const App: React.FC = () => {
   const handleAvatarFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      if (file.size > 500000) {
+        alert("A imagem é muito grande. Use uma imagem menor que 500KB.");
+        return;
+      }
       const reader = new FileReader();
       reader.onloadend = () => {
         setProfile(prev => ({ ...prev, avatar: reader.result as string }));
@@ -280,6 +310,7 @@ const App: React.FC = () => {
       conn = peerRef.current.connect(activeId);
       setConnections(prev => ({ ...prev, [activeId]: conn }));
       conn.on('open', () => conn.send({ type: 'message', payload: newMessage }));
+      conn.on('error', () => alert("Erro ao conectar com o Nodo remoto. Pode estar offline."));
     } else if (conn) {
       conn.send({ type: 'message', payload: newMessage });
     }
@@ -293,7 +324,8 @@ const App: React.FC = () => {
           <form onSubmit={handleLogin} className="space-y-6">
             <h2 className="text-[10px] font-bold mb-8 text-center uppercase tracking-[0.5em] opacity-40">Identidade P2P</h2>
             <input required placeholder="Seu Nome" value={profile.name} onChange={e => setProfile({...profile, name: e.target.value})} className="w-full bg-zinc-900 border border-white/10 p-5 rounded-2xl outline-none text-white focus:border-white/30 transition-all" />
-            <input required placeholder="Seu @username" value={profile.username} onChange={e => setProfile({...profile, username: e.target.value.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()})} className="w-full bg-zinc-900 border border-white/10 p-5 rounded-2xl outline-none text-white focus:border-white/30 transition-all font-mono text-sm" />
+            <input required placeholder="Seu @username (Ex: usuario1)" value={profile.username} onChange={e => setProfile({...profile, username: e.target.value.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()})} className="w-full bg-zinc-900 border border-white/10 p-5 rounded-2xl outline-none text-white focus:border-white/30 transition-all font-mono text-sm" />
+            <p className="text-[9px] opacity-20 text-center italic">Use nomes diferentes em cada dispositivo para testar.</p>
             <button type="submit" className="w-full noir-button p-5 rounded-2xl font-black uppercase tracking-widest text-[11px] mt-6">Ativar Nodo</button>
           </form>
         </div>
@@ -347,6 +379,11 @@ const App: React.FC = () => {
                   </div>
                 </button>
               ))}
+              {contacts.length === 1 && (
+                <div className="py-10 text-center opacity-20">
+                  <p className="text-[10px] uppercase tracking-widest">Nenhum par encontrado</p>
+                </div>
+              )}
             </div>
           </aside>
         )}
@@ -362,7 +399,6 @@ const App: React.FC = () => {
                     <input type="file" ref={fileInputRef} onChange={handleAvatarFileChange} accept="image/*" className="hidden" />
                     
                     <div className="absolute -bottom-2 -right-2 flex gap-2">
-                        {/* Botão de Upload Local */}
                         <button 
                           onClick={() => fileInputRef.current?.click()}
                           className="bg-white text-black p-3 rounded-xl shadow-xl hover:scale-110 transition-all border border-black/10"
@@ -371,7 +407,6 @@ const App: React.FC = () => {
                           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="3" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" /><path strokeWidth="3" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
                         </button>
                         
-                        {/* Botão Aleatório */}
                         <button 
                           onClick={() => setProfile({...profile, avatar: `https://api.dicebear.com/7.x/shapes/svg?seed=${Math.random()}`})}
                           className="bg-zinc-800 text-white p-3 rounded-xl shadow-xl hover:scale-110 transition-all border border-white/10"
@@ -384,7 +419,7 @@ const App: React.FC = () => {
                   <div>
                     <h3 className="text-2xl font-bold">{profile.name}</h3>
                     <p className="text-sm font-mono opacity-40">@{profile.username}</p>
-                    <p className="text-[10px] uppercase tracking-widest mt-2 px-3 py-1 bg-white/5 rounded-full inline-block border border-white/5">ID: {profile.id.split('_')[1]}</p>
+                    <p className="text-[10px] uppercase tracking-widest mt-2 px-3 py-1 bg-white/5 rounded-full inline-block border border-white/5">Nodo: {profile.id ? 'Ativo' : 'Sincronizando...'}</p>
                   </div>
                 </div>
 
@@ -400,7 +435,7 @@ const App: React.FC = () => {
                 </div>
 
                 <div className="pt-10 border-t border-white/5 flex gap-4">
-                  <button onClick={() => { announcePresence(profile.id); setActiveTab('chats'); }} className="noir-button px-10 py-5 rounded-2xl font-black uppercase tracking-widest text-[11px]">Salvar Nodo</button>
+                  <button onClick={() => { announcePresence(); setActiveTab('chats'); }} className="noir-button px-10 py-5 rounded-2xl font-black uppercase tracking-widest text-[11px]">Atualizar Nodo</button>
                   <button onClick={handleLogout} className="px-10 py-5 rounded-2xl font-black uppercase tracking-widest text-[11px] border border-red-900/50 text-red-500 hover:bg-red-500/10 transition-all">Desconectar</button>
                 </div>
               </div>
@@ -409,27 +444,38 @@ const App: React.FC = () => {
             <div className="flex-1 p-16 max-w-4xl mx-auto w-full overflow-y-auto custom-scrollbar animate-in">
               <div className="flex justify-between items-center mb-16">
                 <div>
-                  <h2 className="text-6xl font-black tracking-tighter">Global Registry</h2>
+                  <h2 className="text-6xl font-black tracking-tighter">Explorar</h2>
                   <p className="text-[10px] font-bold uppercase tracking-[0.5em] text-zinc-600 mt-4">Nodos ativos no Noir Peak</p>
                 </div>
-                <button onClick={fetchGlobalUsers} className="p-4 border border-white/10 rounded-2xl hover:bg-white/5 transition-all">
-                  <svg className={`w-5 h-5 ${isSyncing ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                <button onClick={fetchGlobalUsers} className="p-4 border border-white/10 rounded-2xl hover:bg-white/5 transition-all group">
+                  <svg className={`w-5 h-5 ${isSyncing ? 'animate-spin' : 'group-hover:rotate-180 transition-all duration-500'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
                 </button>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {globalUsers.filter(u => u.id !== profile.id).map(u => (
-                  <div key={u.id} className="glass p-8 rounded-[3rem] flex items-center justify-between group hover:bg-white/5 border border-white/5 transition-all">
-                    <div className="flex items-center gap-6">
-                      <img src={u.avatar} className="w-16 h-16 rounded-2xl object-cover" alt="" />
-                      <div>
-                        <h3 className="text-xl font-bold">{u.name}</h3>
-                        <p className="text-[10px] font-mono opacity-40">@{u.username}</p>
-                      </div>
-                    </div>
-                    <button onClick={() => startChat(u)} className="noir-button px-6 py-3 rounded-xl font-black text-[9px] uppercase tracking-widest">Connect</button>
+                {globalUsers.filter(u => u.id !== profile.id).length === 0 ? (
+                  <div className="col-span-2 py-20 text-center border-2 border-dashed border-white/5 rounded-[3rem]">
+                    <p className="opacity-30 uppercase tracking-[0.3em] text-[10px] font-bold">Nenhum outro nodo detectado na rede</p>
+                    <p className="text-[9px] opacity-10 mt-2 italic">Dica: Abra o site em outro navegador ou aba anônima com um @username diferente.</p>
                   </div>
-                ))}
+                ) : (
+                  globalUsers.filter(u => u.id !== profile.id).map(u => (
+                    <div key={u.id} className="glass p-8 rounded-[3rem] flex items-center justify-between group hover:bg-white/5 border border-white/5 transition-all">
+                      <div className="flex items-center gap-6">
+                        <img src={u.avatar} className="w-16 h-16 rounded-2xl object-cover" alt="" />
+                        <div>
+                          <h3 className="text-xl font-bold">{u.name}</h3>
+                          <p className="text-[10px] font-mono opacity-40">@{u.username}</p>
+                          <div className="flex items-center gap-1 mt-1">
+                            <div className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse"></div>
+                            <span className="text-[8px] uppercase tracking-tighter opacity-30">Online</span>
+                          </div>
+                        </div>
+                      </div>
+                      <button onClick={() => startChat(u)} className="noir-button px-6 py-3 rounded-xl font-black text-[9px] uppercase tracking-widest">Conectar</button>
+                    </div>
+                  ))
+                )}
               </div>
             </div>
           ) : activeTab === 'chats' && activeId ? (
@@ -440,7 +486,7 @@ const App: React.FC = () => {
                   <div>
                     <h2 className="text-xl font-black">{activeContact?.name}</h2>
                     <p className="text-[9px] font-bold uppercase tracking-widest text-green-500">
-                      {activeId === 'concord_gemini_ai' ? 'Conexão Oráculo Sincronizada' : 'P2P Link Ativo'}
+                      {activeId === 'concord_gemini_ai' ? 'Conexão Oráculo Sincronizada' : 'P2P Link Direto Ativo'}
                     </p>
                   </div>
                 </div>
@@ -458,7 +504,7 @@ const App: React.FC = () => {
 
               <div className="p-12 pt-0">
                 <form onSubmit={sendMessage} className="glass rounded-[2.5rem] p-3 flex items-center gap-4 border border-white/5">
-                  <input value={inputValue} onChange={e => setInputValue(e.target.value)} placeholder="Sussurre para o Nodo..." className="flex-1 bg-transparent border-none outline-none px-6 py-3 text-lg" />
+                  <input value={inputValue} onChange={e => setInputValue(e.target.value)} placeholder="Escreva uma mensagem..." className="flex-1 bg-transparent border-none outline-none px-6 py-3 text-lg" />
                   <button type="submit" className="w-14 h-14 bg-white text-black rounded-2xl flex items-center justify-center hover:scale-105 transition-all">
                     <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="3" d="M14 5l7 7m0 0l-7 7m7-7H3" /></svg>
                   </button>
