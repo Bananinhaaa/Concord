@@ -4,20 +4,18 @@ import react from '@vitejs/plugin-react';
 export default defineConfig({
   plugins: [react()],
   define: {
-    // Define process.env como um objeto vazio para evitar erros de referência no navegador
-    'process.env': {}
+    'process.env.API_KEY': JSON.stringify(process.env.API_KEY),
+    'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV || 'development')
   },
   build: {
     outDir: 'dist',
-    chunkSizeWarningLimit: 2000,
+    chunkSizeWarningLimit: 3000,
     rollupOptions: {
       output: {
-        manualChunks: undefined
+        manualChunks: {
+          vendor: ['react', 'react-dom', 'peerjs', '@google/genai']
+        }
       }
     }
-  },
-  server: {
-    port: 3000,
-    host: true
   }
 });

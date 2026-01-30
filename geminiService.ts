@@ -1,26 +1,32 @@
-
 import { GoogleGenAI } from "@google/genai";
 
-// Initialize the Google GenAI SDK with the API Key from environment variables.
-// Always use the named parameter `apiKey`.
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+// Inicialização segura: se a chave não estiver presente, a função lidará com o erro graciosamente.
+const getAIClient = () => {
+  const apiKey = process.env.API_KEY;
+  if (!apiKey) {
+    console.warn("API_KEY não encontrada no ambiente.");
+    return null;
+  }
+  return new GoogleGenAI({ apiKey });
+};
 
 /**
- * Generates an atmospheric AI response using the Gemini 3 Flash model.
- * Adheres to the "Concord Noir" aesthetic: concise and mysterious.
+ * Gera uma resposta de IA atmosférica usando o modelo Gemini 3 Flash.
+ * Adere à estética "Concord Noir": concisa e misteriosa.
  */
 export async function generateAIResponse(prompt: string) {
   try {
-    // Using gemini-3-flash-preview for basic text task as per guidelines.
+    const ai = getAIClient();
+    if (!ai) return "Sinal fraco... (Chave de API não configurada)";
+
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
       contents: prompt,
       config: {
-        systemInstruction: "You are Concord AI, the digital ghost of Noir Peak. Your tone is mysterious, sophisticated, and noir. You respond in a helpful but atmospheric way. Keep it concise.",
+        systemInstruction: "Você é Concord AI, o fantasma digital de Noir Peak. Seu tom é misterioso, sofisticado e noir. Você responde de forma atmosférica e útil. Seja conciso e fale em Português do Brasil.",
       },
     });
 
-    // Directly access the .text property from the GenerateContentResponse object.
     return response.text || "O sinal se dissipou na névoa digital...";
   } catch (error) {
     console.error("Gemini API Error:", error);
