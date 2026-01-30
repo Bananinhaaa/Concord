@@ -1,19 +1,18 @@
-
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   plugins: [react()],
-  base: '/',
+  define: {
+    // Define process.env como um objeto vazio para evitar erros de referência no navegador
+    'process.env': {}
+  },
   build: {
     outDir: 'dist',
-    chunkSizeWarningLimit: 1000, // Aumenta o limite para 1000kb para silenciar o aviso
+    chunkSizeWarningLimit: 2000,
     rollupOptions: {
-      input: './index.html',
       output: {
-        manualChunks: {
-          vendor: ['react', 'react-dom', 'peerjs', '@google/genai']
-        }
+        manualChunks: undefined
       }
     }
   },
