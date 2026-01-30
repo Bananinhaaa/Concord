@@ -23,3 +23,11 @@ export interface Chat {
   phone?: string;
   is_verified?: boolean;
 }
+
+export interface Group {
+  id: string;
+  name: string;
+  description?: string;
+  created_by: string;
+  created_at: string;
+}
