@@ -5,12 +5,13 @@ import react from '@vitejs/plugin-react';
 export default defineConfig({
   plugins: [react()],
   define: {
-    // Garante que o process.env esteja disponível para bibliotecas que o exigem
+    // Garante que variáveis de ambiente não quebrem o build
     'process.env.API_KEY': JSON.stringify(process.env.API_KEY || ''),
     'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV || 'production')
   },
   build: {
-    outDir: 'dist', // O diretório padrão que o Render espera
+    // Alterado para 'concord' para satisfazer o erro do Render
+    outDir: 'concord', 
     emptyOutDir: true,
     chunkSizeWarningLimit: 2000,
     rollupOptions: {
