@@ -137,11 +137,7 @@ export default function App() {
     if (supabase && isSupabaseConfigured) {
       const { error } = await supabase.from('profiles').update(updatedData).eq('id', userProfile?.id);
       if (error) {
-        if (error.message.includes('avatar_url')) {
-          alert("ERRO DE BANCO: A coluna 'avatar_url' não existe. Vá no PAINEL ADMIN -> SCRIPTS SQL e execute o código de correção no seu Supabase.");
-        } else {
-          alert("Erro ao salvar no banco: " + error.message);
-        }
+        alert("ERRO DE BANCO: Coluna não encontrada ou cache desatualizado. Por favor, execute o script de RECONSTRUÇÃO no Painel Admin -> Scripts SQL.");
       } else {
         alert("Identidade Sincronizada Globalmente!");
       }
@@ -245,7 +241,7 @@ export default function App() {
             <h1 className="text-5xl font-black uppercase mb-12 tracking-tighter">Nodo Mestre</h1>
             <div className="flex gap-8 mb-12 border-b border-white/5 pb-6">
                <button onClick={() => setAdminSubView('supabase')} className={`text-[12px] font-black uppercase ${adminSubView === 'supabase' ? 'text-blue-500 border-b-2 border-blue-500 pb-2' : 'text-zinc-600'}`}>Configuração</button>
-               <button onClick={() => setAdminSubView('sql')} className={`text-[12px] font-black uppercase ${adminSubView === 'sql' ? 'text-green-500 border-b-2 border-green-500 pb-2' : 'text-zinc-600'}`}>Scripts SQL (CORREÇÃO)</button>
+               <button onClick={() => setAdminSubView('sql')} className={`text-[12px] font-black uppercase ${adminSubView === 'sql' ? 'text-green-500 border-b-2 border-green-500 pb-2' : 'text-zinc-600'}`}>RECONSTRUÇÃO TOTAL</button>
             </div>
 
             {adminSubView === 'supabase' ? (
@@ -257,18 +253,17 @@ export default function App() {
             ) : (
               <div className="space-y-6 animate-in">
                  <div className="bg-red-500/10 border border-red-500/20 p-6 rounded-2xl">
-                    <p className="text-xs font-black uppercase text-red-400">⚠️ Se você está vendo erros de 'avatar_url', copie o código abaixo e execute no SQL Editor do seu Supabase.</p>
+                    <p className="text-xs font-black uppercase text-red-400">⚠️ Use este código se o site der erro de 'column not found' ou cache de schema. Isso vai resetar as tabelas para o padrão correto.</p>
                  </div>
                  <pre className="bg-zinc-900 p-8 rounded-[3rem] text-[10px] text-green-500/80 overflow-x-auto font-mono border border-white/5 leading-relaxed">
-{`-- 1. Garante que as colunas existam na tabela profiles
-ALTER TABLE profiles ADD COLUMN IF NOT EXISTS avatar_url text;
-ALTER TABLE profiles ADD COLUMN IF NOT EXISTS bio text;
-ALTER TABLE profiles ADD COLUMN IF NOT EXISTS is_admin boolean DEFAULT false;
+{`-- 1. APAGA AS TABELAS ANTIGAS PARA LIMPAR ERROS
+drop table if exists messages;
+drop table if exists profiles;
 
--- 2. Criação base (caso não exista)
-create table if not exists profiles (
+-- 2. CRIA A TABELA DE PERFIS COMPLETA
+create table profiles (
   id text primary key,
-  phone text unique,
+  phone text unique not null,
   display_name text,
   avatar_url text,
   bio text,
@@ -276,24 +271,24 @@ create table if not exists profiles (
   created_at timestamp with time zone default now()
 );
 
-create table if not exists messages (
+-- 3. CRIA A TABELA DE MENSAGENS
+create table messages (
   id uuid default gen_random_uuid() primary key,
-  sender_id text references profiles(id),
-  receiver_id text references profiles(id),
+  sender_id text references profiles(id) on delete cascade,
+  receiver_id text references profiles(id) on delete cascade,
   content text not null,
   created_at timestamp with time zone default now()
 );
 
--- 3. Habilita RLS (Segurança)
+-- 4. SEGURANÇA (RLS)
 alter table profiles enable row level security;
-create policy "Acesso Livre Select" on profiles for select using (true);
-create policy "Acesso Livre Update" on profiles for update using (true);
-create policy "Acesso Livre Insert" on profiles for insert with check (true);
-
 alter table messages enable row level security;
-create policy "Mensagens Livres" on messages for all using (true);
 
--- 4. Forçar atualização do cache do banco
+-- 5. POLÍTICAS DE ACESSO
+create policy "Público" on profiles for all using (true);
+create policy "Livre" on messages for all using (true);
+
+-- 6. ATUALIZA O CACHE DO SUPABASE
 NOTIFY pgrst, 'reload schema';`}
                  </pre>
               </div>
