@@ -5,25 +5,14 @@ import react from '@vitejs/plugin-react';
 export default defineConfig({
   plugins: [react()],
   define: {
-    // Garante que variáveis de ambiente não quebrem o build
     'process.env.API_KEY': JSON.stringify(process.env.API_KEY || ''),
+    'process.env.SUPABASE_URL': JSON.stringify(process.env.SUPABASE_URL || ''),
+    'process.env.SUPABASE_ANON_KEY': JSON.stringify(process.env.SUPABASE_ANON_KEY || ''),
     'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV || 'production')
   },
   build: {
-    // Alterado para 'concord' para satisfazer o erro do Render
-    outDir: 'concord', 
+    outDir: 'dist', 
     emptyOutDir: true,
-    chunkSizeWarningLimit: 2000,
-    rollupOptions: {
-      output: {
-        manualChunks: {
-          vendor: ['react', 'react-dom', 'peerjs', '@google/genai']
-        }
-      }
-    }
-  },
-  server: {
-    port: 3000,
-    host: true
+    chunkSizeWarningLimit: 2000
   }
 });

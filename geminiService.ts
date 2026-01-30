@@ -1,14 +1,8 @@
+
 import { GoogleGenAI } from "@google/genai";
 
-// Inicialização segura: se a chave não estiver presente, a função lidará com o erro graciosamente.
-const getAIClient = () => {
-  const apiKey = process.env.API_KEY;
-  if (!apiKey) {
-    console.warn("API_KEY não encontrada no ambiente.");
-    return null;
-  }
-  return new GoogleGenAI({ apiKey });
-};
+// Initialize the GoogleGenAI client using the API key from environment variables as per guidelines.
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 /**
  * Gera uma resposta de IA atmosférica usando o modelo Gemini 3 Flash.
@@ -16,9 +10,7 @@ const getAIClient = () => {
  */
 export async function generateAIResponse(prompt: string) {
   try {
-    const ai = getAIClient();
-    if (!ai) return "Sinal fraco... (Chave de API não configurada)";
-
+    // Calling generateContent with the model name and prompt directly.
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
       contents: prompt,
@@ -27,6 +19,7 @@ export async function generateAIResponse(prompt: string) {
       },
     });
 
+    // Directly access the .text property from the response object.
     return response.text || "O sinal se dissipou na névoa digital...";
   } catch (error) {
     console.error("Gemini API Error:", error);
