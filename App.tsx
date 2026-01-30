@@ -3,8 +3,12 @@ import React, { useState, useEffect, useRef } from 'react';
 import { supabase, saveSupabaseConfig, isSupabaseConfigured, clearSupabaseConfig } from './supabaseClient';
 import { Message, UserProfile, Chat } from './types';
 
-// LISTA DE NÚMEROS QUE TERÃO ACESSO AO PAINEL ADMIN
-const ADMIN_NUMBERS = ['64981183571', '+5564981183571', '5564981183571'];
+// ADICIONE SEU NÚMERO AQUI (Apenas números, sem espaços ou símbolos)
+const ADMIN_NUMBERS = [
+  '64981183571', 
+  '5564981183571',
+  '+5564981183571'
+];
 
 const Logo = ({ size = 'md' }: { size?: 'sm' | 'md' | 'lg' }) => {
   const s = size === 'sm' ? 'w-8 h-8' : size === 'lg' ? 'w-20 h-20' : 'w-12 h-12';
@@ -40,21 +44,12 @@ export default function App() {
   const [isOtpSent, setIsOtpSent] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    // Tenta capturar convite via URL para casos de emergência
-    const params = new URLSearchParams(window.location.search);
-    const joinToken = params.get('join');
-    if (joinToken) {
-      try {
-        const decoded = atob(joinToken);
-        const { url, key } = JSON.parse(decoded);
-        if (url && key) {
-          saveSupabaseConfig(url, key);
-          return;
-        }
-      } catch (e) { console.error("Erro no link"); }
-    }
+  // Checagem de Admin em tempo real baseada no número
+  const isActuallyAdmin = session?.user?.phone && ADMIN_NUMBERS.some(n => 
+    n.replace(/\D/g, '') === session.user.phone.replace(/\D/g, '')
+  );
 
+  useEffect(() => {
     const init = async () => {
       setLoading(true);
       const stored = localStorage.getItem('CONCORD_SESSION');
@@ -80,7 +75,6 @@ export default function App() {
       let profile = remote;
 
       if (!remote) {
-        // Criar perfil instantaneamente se não existir
         const { data: inserted } = await supabase.from('profiles').insert({
           id: user.id,
           phone: userPhone,
@@ -88,6 +82,9 @@ export default function App() {
           is_admin: isAdmin
         }).select().single();
         profile = inserted;
+      } else if (remote.is_admin !== isAdmin) {
+        const { data: updated } = await supabase.from('profiles').update({ is_admin: isAdmin }).eq('id', user.id).select().single();
+        profile = updated;
       }
 
       if (profile) {
@@ -97,7 +94,7 @@ export default function App() {
         setEditAvatar(profile.avatar_url || '');
       }
     } catch (e) { 
-      console.warn("Offline profile");
+      setUserProfile({ id: user.id, phone: userPhone, is_admin: isAdmin } as any);
     }
   };
 
@@ -147,13 +144,9 @@ export default function App() {
       if (view === 'chats') fetchChats();
       if (activeChat) fetchMessages();
 
-      const sub = supabase.channel('realtime_concord').on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, (payload) => {
-        const newMsg = payload.new as Message;
-        if ((newMsg.sender_id === activeChat?.id && newMsg.receiver_id === session.user.id) || 
-            (newMsg.sender_id === session.user.id && newMsg.receiver_id === activeChat?.id)) {
-          setMessages(prev => [...prev, newMsg]);
-        }
+      const sub = supabase.channel('realtime_concord').on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, () => {
         fetchChats();
+        if (activeChat) fetchMessages();
       }).subscribe();
 
       return () => { supabase.removeChannel(sub); };
@@ -172,15 +165,12 @@ export default function App() {
       <div className="w-full max-w-md glass p-10 rounded-[3rem] mt-10 animate-in">
         <form onSubmit={(e) => { e.preventDefault(); if(isOtpSent) { const s = {user: {id: 'u-'+phone.replace(/\D/g,''), phone}}; localStorage.setItem('CONCORD_SESSION', JSON.stringify(s)); setSession(s); syncProfile(s.user); } else setIsOtpSent(true); }} className="space-y-6">
           <h2 className="text-2xl font-black mb-6 text-center uppercase tracking-widest">Acesso Noir</h2>
-          <input value={phone} onChange={e => setPhone(e.target.value)} placeholder="Seu Telefone..." className="w-full bg-zinc-900 border border-white/10 p-5 rounded-2xl text-white outline-none focus:border-white/30 transition-all" />
+          <input value={phone} onChange={e => setPhone(e.target.value)} placeholder="Número (ex: 64981183571)" className="w-full bg-zinc-900 border border-white/10 p-5 rounded-2xl text-white outline-none focus:border-white/30 transition-all" />
           {isOtpSent && <input placeholder="Código 000000" className="w-full bg-zinc-900 border border-white/10 p-5 rounded-2xl text-white text-center text-xl font-bold animate-in" />}
           <button type="submit" className="w-full noir-button p-5 rounded-2xl font-black uppercase text-[11px] tracking-widest">
             {isOtpSent ? 'Confirmar Entrada' : 'Receber Código'}
           </button>
         </form>
-        {!isSupabaseConfigured && (
-          <p className="text-[9px] text-center mt-6 text-red-500/50 uppercase font-black">Aviso: Nodo não configurado pelo Admin.</p>
-        )}
       </div>
     </div>
   );
@@ -191,15 +181,15 @@ export default function App() {
         <div className="flex items-center justify-between mb-10">
           <Logo size="sm" />
           <div className="flex gap-4 items-center">
-             {userProfile?.is_admin && <button onClick={() => setView('admin')} className={`text-[9px] font-black uppercase px-4 py-2 rounded-xl border-2 transition-all ${view === 'admin' ? 'bg-white text-black border-white' : 'text-white border-white/20'}`}>Painel</button>}
-             <button onClick={() => clearSupabaseConfig()} className="text-[9px] font-bold uppercase text-zinc-600 hover:text-red-400">Desconectar</button>
+             {isActuallyAdmin && <button onClick={() => setView('admin')} className={`text-[9px] font-black uppercase px-4 py-2 rounded-xl border-2 transition-all ${view === 'admin' ? 'bg-white text-black border-white shadow-[0_0_20px_rgba(255,255,255,0.3)]' : 'text-white border-white/20'}`}>Painel</button>}
+             <button onClick={() => { localStorage.clear(); window.location.reload(); }} className="text-[9px] font-bold uppercase text-zinc-600 hover:text-white transition-colors">Sair</button>
           </div>
         </div>
         
         <nav className="flex flex-col gap-1 mb-8">
           <button onClick={() => { setView('chats'); setActiveChat(null); }} className={`p-4 rounded-2xl text-[10px] font-black uppercase text-left transition-all ${view === 'chats' ? 'bg-white text-black shadow-xl' : 'hover:bg-white/5 text-zinc-400'}`}>Conversas</button>
           <button onClick={() => { setView('explore'); setActiveChat(null); }} className={`p-4 rounded-2xl text-[10px] font-black uppercase text-left transition-all ${view === 'explore' ? 'bg-white text-black shadow-xl' : 'hover:bg-white/5 text-zinc-400'}`}>Explorar Rede</button>
-          <button onClick={() => { setView('profile'); setActiveChat(null); }} className={`p-4 rounded-2xl text-[10px] font-black uppercase text-left transition-all ${view === 'profile' ? 'bg-white text-black shadow-xl' : 'hover:bg-white/5 text-zinc-400'}`}>Minha Identidade</button>
+          <button onClick={() => { setView('profile'); setActiveChat(null); }} className={`p-4 rounded-2xl text-[10px] font-black uppercase text-left transition-all ${view === 'profile' ? 'bg-white text-black shadow-xl' : 'hover:bg-white/5 text-zinc-400'}`}>Identidade</button>
         </nav>
 
         <div className="flex-1 overflow-y-auto space-y-2 custom-scrollbar pr-2">
@@ -210,13 +200,10 @@ export default function App() {
               </div>
               <div className="text-left overflow-hidden">
                 <p className="font-black text-[11px] uppercase truncate">{chat.display_name || chat.phone}</p>
-                <p className="text-[8px] opacity-40 uppercase font-black">Online</p>
+                <p className="text-[8px] opacity-40 uppercase font-black">Ativo</p>
               </div>
             </button>
           ))}
-          {view === 'chats' && chats.length === 0 && (
-             <p className="text-[9px] text-center opacity-20 uppercase font-black mt-10 tracking-widest">Nenhuma conversa ativa</p>
-          )}
         </div>
       </aside>
 
@@ -229,23 +216,24 @@ export default function App() {
             </header>
 
             {adminSubView === 'supabase' ? (
-              <div className="max-w-xl space-y-8">
-                <h3 className="text-2xl font-black uppercase">Configurações do Nodo</h3>
-                <div className="space-y-4">
-                  <input value={sbUrl} onChange={e => setSbUrl(e.target.value)} placeholder="URL do Supabase" className="w-full bg-zinc-900 p-5 rounded-2xl text-xs outline-none border border-white/5" />
-                  <input value={sbKey} onChange={e => setSbKey(e.target.value)} placeholder="Anon Key" className="w-full bg-zinc-900 p-5 rounded-2xl text-xs outline-none border border-white/5" />
-                  <button onClick={() => saveSupabaseConfig(sbUrl, sbKey)} className="w-full bg-blue-600 p-5 rounded-2xl font-black uppercase text-[10px] tracking-widest shadow-xl">Ativar Nodo Global</button>
+              <div className="max-w-xl space-y-10">
+                <div className="p-8 bg-blue-500/10 rounded-[3rem] border border-blue-500/20 space-y-6">
+                   <h4 className="text-[11px] font-black uppercase text-blue-400">Status do Nodo</h4>
+                   <p className="text-[12px] text-zinc-400 leading-relaxed">Defina a URL e a Anon Key do seu projeto Supabase para que todos os usuários se conectem automaticamente ao seu banco.</p>
                 </div>
-                <div className="p-8 bg-zinc-900/50 rounded-[3rem] border border-white/5">
-                   <p className="text-xs text-zinc-400 leading-relaxed mb-4">Para que ninguém precise de link, você deve salvar essas chaves aqui uma vez, ou definir como variáveis de ambiente no seu provedor de hospedagem.</p>
+
+                <div className="space-y-6">
+                  <input value={sbUrl} onChange={e => setSbUrl(e.target.value)} placeholder="URL do Supabase" className="w-full bg-zinc-900 p-5 rounded-2xl text-xs outline-none border border-white/5 focus:border-white/20" />
+                  <input value={sbKey} onChange={e => setSbKey(e.target.value)} placeholder="Anon Key" className="w-full bg-zinc-900 p-5 rounded-2xl text-xs outline-none border border-white/5 focus:border-white/20" />
+                  <button onClick={() => saveSupabaseConfig(sbUrl, sbKey)} className="w-full bg-white text-black p-5 rounded-2xl font-black uppercase text-[10px] tracking-widest shadow-xl">Salvar Configurações</button>
                 </div>
               </div>
             ) : (
-              <div className="space-y-6">
-                 <h2 className="text-2xl font-black uppercase text-green-500">SQL Setup</h2>
-                 <pre className="bg-zinc-900 p-8 rounded-[2rem] text-[10px] text-green-400 overflow-x-auto font-mono border border-white/5">
-                   {`/* Copie e rode no SQL Editor do seu Supabase */\n` + 
-                    `create table if not exists profiles (...); -- Veja o código anterior`}
+              <div className="space-y-8 animate-in">
+                 <h2 className="text-3xl font-black uppercase tracking-tighter text-green-500">Node Script</h2>
+                 <p className="text-xs text-zinc-500">Execute este comando no SQL Editor do Supabase para criar as tabelas necessárias.</p>
+                 <pre className="bg-zinc-900/50 p-8 rounded-[2rem] text-[10px] text-green-400/80 overflow-x-auto font-mono border border-white/5 whitespace-pre-wrap">
+                   {`create table if not exists profiles (\n  id uuid references auth.users on delete cascade primary key,\n  phone text unique,\n  display_name text,\n  avatar_url text,\n  bio text,\n  is_admin boolean default false,\n  created_at timestamp with time zone default timezone('utc'::text, now()) not null\n);\n\ncreate table if not exists messages (\n  id uuid default gen_random_uuid() primary key,\n  sender_id uuid references profiles(id),\n  receiver_id uuid references profiles(id),\n  content text not null,\n  created_at timestamp with time zone default timezone('utc'::text, now()) not null\n);`}
                  </pre>
               </div>
             )}
@@ -261,9 +249,9 @@ export default function App() {
                    </div>
                    <div>
                       <h3 className="font-black text-[14px] uppercase tracking-wide">{user.display_name || user.phone}</h3>
-                      <p className="text-[9px] opacity-30 font-black mt-2 uppercase tracking-widest">Sinal Noir Peak</p>
+                      <p className="text-[9px] opacity-30 font-black mt-2 uppercase tracking-widest">Usuário Verificado</p>
                    </div>
-                   <button onClick={() => { setActiveChat({id: user.id, display_name: user.display_name, avatar_url: user.avatar_url}); setView('chats'); }} className="w-full bg-white text-black p-5 rounded-2xl text-[10px] font-black uppercase shadow-lg hover:scale-[1.05] transition-all">Iniciar Conexão</button>
+                   <button onClick={() => { setActiveChat({id: user.id, display_name: user.display_name, avatar_url: user.avatar_url}); setView('chats'); }} className="w-full bg-white text-black p-5 rounded-2xl text-[10px] font-black uppercase shadow-lg hover:scale-[1.05] transition-all">Abrir Canal</button>
                 </div>
               ))}
             </div>
@@ -278,7 +266,7 @@ export default function App() {
                 <h2 className="text-base font-black uppercase tracking-tight leading-none">{activeChat.display_name || activeChat.phone}</h2>
                 <div className="flex items-center gap-2 mt-2">
                    <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse shadow-[0_0_10px_#22c55e]"></div>
-                   <span className="text-[9px] font-black uppercase opacity-40 tracking-widest">Criptografia Ativa</span>
+                   <span className="text-[9px] font-black uppercase opacity-40 tracking-widest">Sinal Online</span>
                 </div>
               </div>
               <button onClick={() => setActiveChat(null)} className="lg:hidden text-[10px] font-black uppercase px-6 py-3 rounded-xl border border-white/10">Voltar</button>
