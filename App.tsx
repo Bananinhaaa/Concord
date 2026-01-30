@@ -4,8 +4,8 @@ import { Message, Contact, UserProfile } from './types';
 import Peer, { DataConnection } from 'peerjs';
 import { generateAIResponse } from './geminiService';
 
-// Registro global centralizado via JSONBlob (mais estável para persistência)
-const REGISTRY_ID = "1344445391503376384";
+// Novo ID de Registro (Atualizado para garantir persistência)
+const REGISTRY_ID = "1344465499252604928";
 const REGISTRY_API = `https://jsonblob.com/api/jsonBlob/${REGISTRY_ID}`;
 const NOTIFICATION_SOUND = 'https://assets.mixkit.co/active_storage/sfx/2358/2358-preview.mp3';
 
@@ -71,24 +71,40 @@ const App: React.FC = () => {
     audioRef.current = new Audio(NOTIFICATION_SOUND);
   }, []);
 
-  // Sincronização corrigida
+  // Sincronização ultra-defensiva
   const syncRegistry = useCallback(async (action: 'announce' | 'fetch', myId?: string) => {
     if (isSyncing) return;
     setIsSyncing(true);
+    
+    const headers = {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json'
+    };
+
     try {
-      // GET sempre com timestamp para evitar cache do navegador
-      const getRes = await fetch(`${REGISTRY_API}?nocache=${Date.now()}`);
-      if (!getRes.ok) throw new Error(`Erro na leitura: ${getRes.status}`);
+      // Tenta ler o registro
+      const getRes = await fetch(`${REGISTRY_API}?t=${Date.now()}`, { headers });
+      
+      if (!getRes.ok) {
+         // Se o registro não existir, tenta criar um novo com a lista vazia
+         if (getRes.status === 404) {
+            await fetch(`https://jsonblob.com/api/jsonBlob`, {
+               method: 'POST',
+               headers,
+               body: JSON.stringify({ users: [] })
+            });
+         }
+         throw new Error(`Servidor indisponível (${getRes.status})`);
+      }
       
       const data = await getRes.json();
       let users = Array.isArray(data.users) ? data.users : [];
       const now = Date.now();
 
-      // Expira usuários inativos (mais de 2 minutos)
-      users = users.filter((u: any) => (now - (u.lastSeen || 0)) < 120000);
+      // Expira usuários inativos (3 minutos para ser mais tolerante)
+      users = users.filter((u: any) => (now - (u.lastSeen || 0)) < 180000);
 
       if (action === 'announce' && myId && profile.username) {
-        // Remove versões antigas de si mesmo
         users = users.filter((u: any) => u.username !== profile.username && u.id !== myId);
         users.push({
           id: myId,
@@ -99,41 +115,38 @@ const App: React.FC = () => {
           lastSeen: now
         });
 
-        // PUT para atualizar o Blob
         const putRes = await fetch(REGISTRY_API, {
           method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
+          headers,
           body: JSON.stringify({ users })
         });
         
         if (putRes.ok) {
           setConnectionStatus('online');
           setErrorMsg('');
-        } else {
-          throw new Error(`Erro na gravação: ${putRes.status}`);
         }
       }
 
       setGlobalUsers(users);
     } catch (e: any) {
-      console.warn("Registry Sync Error:", e.message);
+      console.warn("Sync Warning:", e.message);
+      // Não trava a UI, apenas loga e marca como erro de sinal
       if (action === 'announce') {
         setConnectionStatus('error');
-        setErrorMsg(e.message);
+        setErrorMsg('Sinal fraco...');
       }
     } finally {
       setIsSyncing(false);
     }
   }, [profile.name, profile.username, profile.avatar, profile.bio, isSyncing]);
 
-  // PeerJS com infraestrutura robusta
   useEffect(() => {
     if (isLoggedIn && profile.username && !peerRef.current) {
       setConnectionStatus('connecting');
       const peerId = `concord_${profile.username.toLowerCase()}`;
       
       const peer = new Peer(peerId, {
-        debug: 1,
+        debug: 2,
         config: {
           'iceServers': [
             { urls: 'stun:stun.l.google.com:19302' },
@@ -171,12 +184,13 @@ const App: React.FC = () => {
       });
 
       peer.on('error', (err) => {
-        console.error("PeerJS Error:", err.type);
         setConnectionStatus('error');
-        setErrorMsg(err.type);
-        if (err.type === 'unavailable-id') {
-          alert("Username já em uso. Escolha outro.");
-          handleLogout();
+        if (err.type === 'browser-incompatible') {
+          setErrorMsg('Navegador bloqueia P2P');
+        } else if (err.type === 'unavailable-id') {
+          setErrorMsg('Username em uso');
+        } else {
+          setErrorMsg(err.type);
         }
       });
 
@@ -190,13 +204,12 @@ const App: React.FC = () => {
     };
   }, [isLoggedIn, profile.username]);
 
-  // Heartbeat (15s) e Polling da lista (5s)
   useEffect(() => {
     if (isLoggedIn && profile.id) {
-      const hBeat = setInterval(() => syncRegistry('announce', profile.id), 15000);
+      const hBeat = setInterval(() => syncRegistry('announce', profile.id), 20000);
       const poll = setInterval(() => {
         if (activeTab === 'add-friends') syncRegistry('fetch');
-      }, 5000);
+      }, 8000);
       return () => { clearInterval(hBeat); clearInterval(poll); };
     }
   }, [isLoggedIn, profile.id, activeTab, syncRegistry]);
@@ -266,8 +279,8 @@ const App: React.FC = () => {
           <form onSubmit={handleLogin} className="space-y-6">
             <h2 className="text-[10px] font-bold text-center uppercase tracking-[0.5em] opacity-40">Noir Peak Protocol</h2>
             <input required placeholder="Seu Nome" value={profile.name} onChange={e => setProfile({...profile, name: e.target.value})} className="w-full bg-zinc-900 border border-white/10 p-5 rounded-2xl text-white outline-none" />
-            <input required placeholder="Username (ex: kiko99)" value={profile.username} onChange={e => setProfile({...profile, username: e.target.value.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()})} className="w-full bg-zinc-900 border border-white/10 p-5 rounded-2xl text-white outline-none font-mono" />
-            <button type="submit" className="w-full noir-button p-5 rounded-2xl font-black uppercase tracking-widest text-[11px]">Acessar Rede</button>
+            <input required placeholder="Username (ex: luffy)" value={profile.username} onChange={e => setProfile({...profile, username: e.target.value.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()})} className="w-full bg-zinc-900 border border-white/10 p-5 rounded-2xl text-white outline-none font-mono" />
+            <button type="submit" className="w-full noir-button p-5 rounded-2xl font-black uppercase tracking-widest text-[11px]">Sincronizar</button>
           </form>
         </div>
       </div>
@@ -338,12 +351,12 @@ const App: React.FC = () => {
                   <div>
                     <h3 className="text-xl md:text-2xl font-bold">{profile.name}</h3>
                     <p className="text-sm opacity-40 font-mono">@{profile.username}</p>
-                    {errorMsg && <p className="text-[8px] text-red-500 mt-2 font-mono uppercase">Erro: {errorMsg}</p>}
+                    {errorMsg && <p className="text-[10px] text-red-500 mt-2 font-bold uppercase tracking-widest animate-pulse">Status: {errorMsg}</p>}
                   </div>
                 </div>
                 <div className="pt-10 border-t border-white/5 space-y-4">
-                  <button onClick={() => { syncRegistry('announce', profile.id); }} className="noir-button w-full p-5 rounded-2xl font-black uppercase text-[11px] tracking-widest">Sincronizar Nodo</button>
-                  <button onClick={handleLogout} className="w-full p-5 rounded-2xl font-black uppercase text-[11px] tracking-widest border border-red-500/20 text-red-500 hover:bg-red-500/5 transition-all">Deslogar</button>
+                  <button onClick={() => { syncRegistry('announce', profile.id); }} className="noir-button w-full p-5 rounded-2xl font-black uppercase text-[11px] tracking-widest">Forçar Sync</button>
+                  <button onClick={handleLogout} className="w-full p-5 rounded-2xl font-black uppercase text-[11px] tracking-widest border border-red-500/20 text-red-500 hover:bg-red-500/5 transition-all">Sair</button>
                 </div>
               </div>
             </div>
@@ -352,7 +365,7 @@ const App: React.FC = () => {
               <div className="mb-12 flex justify-between items-end">
                 <div>
                   <h2 className="text-4xl md:text-6xl font-black tracking-tighter">Explorar</h2>
-                  <p className="text-[9px] font-bold uppercase tracking-[0.4em] text-zinc-500 mt-4">Nodos ativos no Peak</p>
+                  <p className="text-[9px] font-bold uppercase tracking-[0.4em] text-zinc-500 mt-4">Procurando nodos no Peak...</p>
                 </div>
                 <button onClick={() => syncRegistry('fetch')} className="p-4 bg-white/5 rounded-full hover:bg-white/10 transition-all">
                   <svg className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="3" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
@@ -362,8 +375,8 @@ const App: React.FC = () => {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {globalUsers.filter(u => u.id !== profile.id).length === 0 ? (
                   <div className="col-span-full py-24 text-center border-2 border-dashed border-white/5 rounded-[3rem] opacity-30">
-                    <p className="uppercase tracking-widest text-[10px] font-bold">Procurando sinais...</p>
-                    <p className="text-[9px] mt-2 italic">Dica: Use outro navegador ou celular com @username diferente.</p>
+                    <p className="uppercase tracking-widest text-[10px] font-bold">Nenhum sinal encontrado</p>
+                    <p className="text-[9px] mt-2 italic">Dica: Use outro dispositivo ou aba com outro username.</p>
                   </div>
                 ) : (
                   globalUsers.filter(u => u.id !== profile.id).map(u => (
@@ -375,7 +388,7 @@ const App: React.FC = () => {
                           <p className="text-[9px] opacity-40 font-mono">@{u.username}</p>
                         </div>
                       </div>
-                      <button onClick={() => { setContacts(p => [...p.filter(c => c.id !== u.id), { ...u, status: 'online' }]); setActiveId(u.id); setActiveTab('chats'); }} className="noir-button px-5 py-2 rounded-xl font-bold text-[9px] uppercase tracking-widest opacity-0 group-hover:opacity-100 transition-all">Conectar</button>
+                      <button onClick={() => { setContacts(p => [...p.filter(c => c.id !== u.id), { ...u, status: 'online' }]); setActiveId(u.id); setActiveTab('chats'); }} className="noir-button px-5 py-2 rounded-xl font-bold text-[9px] uppercase tracking-widest">Conectar</button>
                     </div>
                   ))
                 )}
@@ -387,7 +400,7 @@ const App: React.FC = () => {
                 <img src={activeContact?.avatar} className="w-12 h-12 md:w-14 md:h-14 rounded-xl object-cover bg-black" alt="" />
                 <div className="ml-4 md:ml-6">
                   <h2 className="text-lg md:text-xl font-black">{activeContact?.name}</h2>
-                  <p className="text-[8px] font-bold uppercase tracking-widest text-green-500">P2P Sincronizado</p>
+                  <p className="text-[8px] font-bold uppercase tracking-widest text-green-500">P2P Ativo</p>
                 </div>
                 <button onClick={() => setActiveId(null)} className="ml-auto lg:hidden p-4 bg-white/5 rounded-2xl">
                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="3" d="M10 19l-7-7m0 0l7-7m-7 7h18" /></svg>
@@ -416,7 +429,7 @@ const App: React.FC = () => {
           ) : (
             <div className="flex-1 flex flex-col items-center justify-center opacity-10 p-10 text-center animate-in">
               <Logo size="lg" />
-              <p className="text-[9px] font-bold uppercase tracking-[0.5em] mt-8">Concord Noir Peak • Standby</p>
+              <p className="text-[9px] font-bold uppercase tracking-[0.5em] mt-8">Noir Peak • Standby</p>
             </div>
           )}
         </main>
