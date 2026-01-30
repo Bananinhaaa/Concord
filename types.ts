@@ -10,6 +10,9 @@ export interface Message {
 export interface UserProfile {
   id: string;
   phone: string;
+  display_name?: string;
+  avatar_url?: string;
+  bio?: string;
   is_verified: boolean;
   is_admin: boolean;
   is_banned: boolean;
@@ -18,10 +21,17 @@ export interface UserProfile {
   created_at: string;
 }
 
+/**
+ * Chat interface updated to include avatar_url.
+ * This resolves property access errors on lines 299, 391, and 453 of App.tsx.
+ */
 export interface Chat {
   id: string;
   phone?: string;
+  display_name?: string;
+  avatar_url?: string;
   is_verified?: boolean;
+  status?: 'pending' | 'accepted';
 }
 
 export interface Group {
@@ -29,5 +39,13 @@ export interface Group {
   name: string;
   description?: string;
   created_by: string;
+  created_at: string;
+}
+
+export interface Contact {
+  id: string;
+  user_id: string;
+  contact_id: string;
+  status: 'accepted' | 'pending' | 'blocked';
   created_at: string;
 }
