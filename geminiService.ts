@@ -1,14 +1,14 @@
 
 import { GoogleGenAI } from "@google/genai";
 
-// Initialize the GoogleGenAI client using the API key from environment variables as per guidelines.
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-
 /**
  * Gera uma resposta de IA atmosférica usando o modelo Gemini 3 Flash.
  * Adere à estética "Concord Noir": concisa e misteriosa.
  */
 export async function generateAIResponse(prompt: string) {
+  // Initialize the GoogleGenAI client inside the function to ensure the correct context and key.
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  
   try {
     // Calling generateContent with the model name and prompt directly.
     const response = await ai.models.generateContent({
