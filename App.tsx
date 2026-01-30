@@ -116,6 +116,7 @@ export default function App() {
     if (msgs) {
       const ids = Array.from(new Set(msgs.flatMap((m: any) => m.sender_id === session.user.id ? m.receiver_id : m.sender_id)));
       if (ids.length > 0) {
+        // Fix: supabase .in() requires column name as first argument.
         const { data: profiles } = await supabase.from('profiles').select('id, phone, display_name, avatar_url').in('id', ids);
         setChats(profiles || []);
       }
@@ -137,9 +138,9 @@ export default function App() {
     if (supabase && isSupabaseConfigured) {
       const { error } = await supabase.from('profiles').update(updatedData).eq('id', userProfile?.id);
       if (error) {
-        alert("ERRO DE BANCO: Coluna não encontrada ou cache desatualizado. Por favor, execute o script de RECONSTRUÇÃO no Painel Admin -> Scripts SQL.");
+        alert("ERRO DE BANCO: Dependência detectada ou cache desatualizado. Use o script de RECONSTRUÇÃO TOTAL (com CASCADE) no Painel Admin.");
       } else {
-        alert("Identidade Sincronizada Globalmente!");
+        alert("Identidade Sincronizada!");
       }
     } else {
       localStorage.setItem('CONCORD_LOCAL_PROFILE', JSON.stringify(updatedData));
@@ -151,7 +152,7 @@ export default function App() {
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      if (file.size > 1000000) { alert("Imagem muito pesada! Use uma de até 1MB."); return; }
+      if (file.size > 1000000) { alert("Limite de 1MB excedido."); return; }
       const reader = new FileReader();
       reader.onloadend = () => setEditAvatar(reader.result as string);
       reader.readAsDataURL(file);
@@ -194,7 +195,7 @@ export default function App() {
       <div className="w-full max-w-md glass p-12 rounded-[4rem] mt-12 animate-in shadow-2xl text-center">
         <form onSubmit={handleLogin} className="space-y-8">
           <h2 className="text-3xl font-black uppercase tracking-[0.2em]">Entrar</h2>
-          <input value={phoneInput} onChange={e => setPhoneInput(e.target.value)} placeholder="64981183571" className="w-full bg-zinc-900 border border-white/5 p-6 rounded-2xl text-white outline-none focus:border-white/20 text-center font-bold tracking-widest" />
+          <input value={phoneInput} onChange={e => setPhoneInput(e.target.value)} placeholder="Seu Número" className="w-full bg-zinc-900 border border-white/5 p-6 rounded-2xl text-white outline-none focus:border-white/20 text-center font-bold tracking-widest" />
           <button type="submit" className="w-full noir-button p-6 rounded-2xl font-black uppercase text-[12px] tracking-widest">
             {isOtpSent ? 'Validar Código' : 'Solicitar Entrada'}
           </button>
@@ -228,7 +229,7 @@ export default function App() {
               </div>
               <div className="text-left overflow-hidden">
                 <p className="font-black text-[11px] uppercase truncate">{chat.display_name || chat.phone}</p>
-                <p className="text-[8px] opacity-40 uppercase font-black">Sinal Estável</p>
+                <p className="text-[8px] opacity-40 uppercase font-black">Online</p>
               </div>
             </button>
           ))}
@@ -241,7 +242,7 @@ export default function App() {
             <h1 className="text-5xl font-black uppercase mb-12 tracking-tighter">Nodo Mestre</h1>
             <div className="flex gap-8 mb-12 border-b border-white/5 pb-6">
                <button onClick={() => setAdminSubView('supabase')} className={`text-[12px] font-black uppercase ${adminSubView === 'supabase' ? 'text-blue-500 border-b-2 border-blue-500 pb-2' : 'text-zinc-600'}`}>Configuração</button>
-               <button onClick={() => setAdminSubView('sql')} className={`text-[12px] font-black uppercase ${adminSubView === 'sql' ? 'text-green-500 border-b-2 border-green-500 pb-2' : 'text-zinc-600'}`}>RECONSTRUÇÃO TOTAL</button>
+               <button onClick={() => setAdminSubView('sql')} className={`text-[12px] font-black uppercase ${adminSubView === 'sql' ? 'text-green-500 border-b-2 border-green-500 pb-2' : 'text-zinc-600'}`}>RECONSTRUÇÃO NUCLEAR (CASCADE)</button>
             </div>
 
             {adminSubView === 'supabase' ? (
@@ -253,42 +254,44 @@ export default function App() {
             ) : (
               <div className="space-y-6 animate-in">
                  <div className="bg-red-500/10 border border-red-500/20 p-6 rounded-2xl">
-                    <p className="text-xs font-black uppercase text-red-400">⚠️ Use este código se o site der erro de 'column not found' ou cache de schema. Isso vai resetar as tabelas para o padrão correto.</p>
+                    <p className="text-xs font-black uppercase text-red-400">⚠️ USE ESTE SCRIPT PARA RESOLVER O ERRO 2BP01 (DEPENDÊNCIA). O COMANDO CASCADE IRÁ REMOVER AS TABELAS QUE ESTÃO BLOQUEANDO A RECONSTRUÇÃO.</p>
                  </div>
                  <pre className="bg-zinc-900 p-8 rounded-[3rem] text-[10px] text-green-500/80 overflow-x-auto font-mono border border-white/5 leading-relaxed">
-{`-- 1. APAGA AS TABELAS ANTIGAS PARA LIMPAR ERROS
-drop table if exists messages;
-drop table if exists profiles;
+{`-- 1. DESTRUIÇÃO TOTAL (FORÇADA COM CASCADE)
+DROP TABLE IF EXISTS messages CASCADE;
+DROP TABLE IF EXISTS profiles CASCADE;
+DROP TABLE IF EXISTS contacts CASCADE;
+DROP TABLE IF EXISTS groups CASCADE;
 
--- 2. CRIA A TABELA DE PERFIS COMPLETA
-create table profiles (
-  id text primary key,
-  phone text unique not null,
-  display_name text,
-  avatar_url text,
-  bio text,
-  is_admin boolean default false,
-  created_at timestamp with time zone default now()
+-- 2. RECONSTRUÇÃO DO NÚCLEO
+CREATE TABLE profiles (
+  id TEXT PRIMARY KEY,
+  phone TEXT UNIQUE NOT NULL,
+  display_name TEXT,
+  avatar_url TEXT,
+  bio TEXT,
+  is_admin BOOLEAN DEFAULT false,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
 );
 
--- 3. CRIA A TABELA DE MENSAGENS
-create table messages (
-  id uuid default gen_random_uuid() primary key,
-  sender_id text references profiles(id) on delete cascade,
-  receiver_id text references profiles(id) on delete cascade,
-  content text not null,
-  created_at timestamp with time zone default now()
+-- 3. RECONSTRUÇÃO DAS MENSAGENS
+CREATE TABLE messages (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  sender_id TEXT REFERENCES profiles(id) ON DELETE CASCADE,
+  receiver_id TEXT REFERENCES profiles(id) ON DELETE CASCADE,
+  content TEXT NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
 );
 
 -- 4. SEGURANÇA (RLS)
-alter table profiles enable row level security;
-alter table messages enable row level security;
+ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE messages ENABLE ROW LEVEL SECURITY;
 
 -- 5. POLÍTICAS DE ACESSO
-create policy "Público" on profiles for all using (true);
-create policy "Livre" on messages for all using (true);
+CREATE POLICY "Público" ON profiles FOR ALL USING (true);
+CREATE POLICY "Livre" ON messages FOR ALL USING (true);
 
--- 6. ATUALIZA O CACHE DO SUPABASE
+-- 6. LIMPEZA DE CACHE DO SCHEMAS
 NOTIFY pgrst, 'reload schema';`}
                  </pre>
               </div>
