@@ -1,33 +1,26 @@
 
 import { createClient } from '@supabase/supabase-js';
 
-// Tenta obter do ambiente ou do localStorage do navegador
-const getSupabaseConfig = () => {
-  const envUrl = process.env.SUPABASE_URL;
-  const envKey = process.env.SUPABASE_ANON_KEY;
-  
-  const localUrl = typeof window !== 'undefined' ? localStorage.getItem('CONCORD_SB_URL') : null;
-  const localKey = typeof window !== 'undefined' ? localStorage.getItem('CONCORD_SB_KEY') : null;
-
-  return {
-    url: envUrl || localUrl || '',
-    key: envKey || localKey || ''
-  };
-};
-
-const config = getSupabaseConfig();
+/**
+ * CONFIGURAÇÃO GLOBAL DO NODO
+ * Para que todos os seus amigos entrem automaticamente sem link de convite:
+ * 1. No seu painel do Supabase, vá em Project Settings -> API.
+ * 2. Copie a 'Project URL' e a 'anon public key'.
+ * 3. Se você não usar Variáveis de Ambiente na Vercel, você pode colar elas aqui embaixo entre as aspas.
+ */
+const GLOBAL_URL = process.env.SUPABASE_URL || localStorage.getItem('CONCORD_SB_URL') || '';
+const GLOBAL_KEY = process.env.SUPABASE_ANON_KEY || localStorage.getItem('CONCORD_SB_KEY') || '';
 
 export const isSupabaseConfigured = 
-  config.url.length > 0 && 
-  config.url.startsWith('http') && 
-  config.key.length > 0;
+  GLOBAL_URL.length > 0 && 
+  GLOBAL_URL.startsWith('http') && 
+  GLOBAL_KEY.length > 0;
 
-// Inicializa o cliente se tivermos os dados mínimos
+// Inicializa o cliente único para todos os usuários
 export const supabase = isSupabaseConfigured 
-  ? createClient(config.url, config.key) 
+  ? createClient(GLOBAL_URL, GLOBAL_KEY) 
   : null as any;
 
-// Função para salvar configuração manualmente
 export const saveSupabaseConfig = (url: string, key: string) => {
   localStorage.setItem('CONCORD_SB_URL', url);
   localStorage.setItem('CONCORD_SB_KEY', key);
@@ -37,5 +30,6 @@ export const saveSupabaseConfig = (url: string, key: string) => {
 export const clearSupabaseConfig = () => {
   localStorage.removeItem('CONCORD_SB_URL');
   localStorage.removeItem('CONCORD_SB_KEY');
+  localStorage.removeItem('CONCORD_SESSION');
   window.location.reload();
 };
