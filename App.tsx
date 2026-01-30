@@ -4,8 +4,9 @@ import { Message, Contact, UserProfile } from './types';
 import Peer, { DataConnection } from 'peerjs';
 import { generateAIResponse } from './geminiService';
 
-// Registro global mais resiliente (npoint.io é excelente para payloads JSON simples e rápidos)
-const REGISTRY_API = "https://api.npoint.io/46d97e74360e75529f79"; 
+// Registro global centralizado via JSONBlob (mais estável para persistência)
+const REGISTRY_ID = "1344445391503376384";
+const REGISTRY_API = `https://jsonblob.com/api/jsonBlob/${REGISTRY_ID}`;
 const NOTIFICATION_SOUND = 'https://assets.mixkit.co/active_storage/sfx/2358/2358-preview.mp3';
 
 const Logo: React.FC<{ className?: string, size?: 'sm' | 'md' | 'lg', syncing?: boolean }> = ({ className, size = 'md', syncing }) => {
@@ -13,9 +14,9 @@ const Logo: React.FC<{ className?: string, size?: 'sm' | 'md' | 'lg', syncing?: 
   return (
     <div className={`flex flex-col items-center justify-center gap-4 ${className}`}>
       <div className={`relative ${containerSize} group cursor-pointer`}>
-        <div className={`absolute inset-0 bg-white opacity-10 rounded-xl transition-all duration-1000 ${syncing ? 'animate-ping' : 'rotate-45'}`}></div>
-        <div className="relative h-full w-full bg-black border border-white/20 rounded-xl flex items-center justify-center overflow-hidden shadow-2xl">
-          <svg viewBox="0 0 100 100" className="w-1/2 h-1/2 fill-white">
+        <div className={`absolute inset-0 bg-white opacity-5 rounded-xl transition-all duration-1000 ${syncing ? 'animate-ping' : 'rotate-45'}`}></div>
+        <div className="relative h-full w-full bg-black border border-white/10 rounded-xl flex items-center justify-center overflow-hidden shadow-2xl">
+          <svg viewBox="0 0 100 100" className="w-1/2 h-1/2 fill-white opacity-80">
             <path d="M50 5 L 95 50 L 50 95 L 5 50 Z" fill="none" stroke="currentColor" strokeWidth="2" />
             <path d="M50 20 L 80 50 L 50 80 L 20 50 Z" />
           </svg>
@@ -70,21 +71,24 @@ const App: React.FC = () => {
     audioRef.current = new Audio(NOTIFICATION_SOUND);
   }, []);
 
-  // Sincronização robusta com o Registro Global
+  // Sincronização corrigida
   const syncRegistry = useCallback(async (action: 'announce' | 'fetch', myId?: string) => {
+    if (isSyncing) return;
     setIsSyncing(true);
     try {
-      const res = await fetch(`${REGISTRY_API}?t=${Date.now()}`);
-      if (!res.ok) throw new Error("Erro ao ler registro");
-      const data = await res.json();
-      let users = Array.isArray(data.users) ? data.users : [];
+      // GET sempre com timestamp para evitar cache do navegador
+      const getRes = await fetch(`${REGISTRY_API}?nocache=${Date.now()}`);
+      if (!getRes.ok) throw new Error(`Erro na leitura: ${getRes.status}`);
       
+      const data = await getRes.json();
+      let users = Array.isArray(data.users) ? data.users : [];
       const now = Date.now();
-      // Filtra usuários ativos nos últimos 3 minutos
-      users = users.filter((u: any) => (now - (u.lastSeen || 0)) < 180000);
+
+      // Expira usuários inativos (mais de 2 minutos)
+      users = users.filter((u: any) => (now - (u.lastSeen || 0)) < 120000);
 
       if (action === 'announce' && myId && profile.username) {
-        // Remove duplicatas minhas
+        // Remove versões antigas de si mesmo
         users = users.filter((u: any) => u.username !== profile.username && u.id !== myId);
         users.push({
           id: myId,
@@ -95,34 +99,46 @@ const App: React.FC = () => {
           lastSeen: now
         });
 
-        const saveRes = await fetch(REGISTRY_API, {
-          method: 'POST', // Alguns APIs usam POST para update se configurado assim, npoint aceita POST/PUT
+        // PUT para atualizar o Blob
+        const putRes = await fetch(REGISTRY_API, {
+          method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ users })
         });
-        if (saveRes.ok) setConnectionStatus('online');
+        
+        if (putRes.ok) {
+          setConnectionStatus('online');
+          setErrorMsg('');
+        } else {
+          throw new Error(`Erro na gravação: ${putRes.status}`);
+        }
       }
 
       setGlobalUsers(users);
-    } catch (e) {
-      console.error("Registry Sync Fail:", e);
-      if (action === 'announce') setConnectionStatus('error');
+    } catch (e: any) {
+      console.warn("Registry Sync Error:", e.message);
+      if (action === 'announce') {
+        setConnectionStatus('error');
+        setErrorMsg(e.message);
+      }
     } finally {
       setIsSyncing(false);
     }
-  }, [profile.name, profile.username, profile.avatar, profile.bio]);
+  }, [profile.name, profile.username, profile.avatar, profile.bio, isSyncing]);
 
-  // Inicialização do PeerJS
+  // PeerJS com infraestrutura robusta
   useEffect(() => {
     if (isLoggedIn && profile.username && !peerRef.current) {
       setConnectionStatus('connecting');
       const peerId = `concord_${profile.username.toLowerCase()}`;
       
       const peer = new Peer(peerId, {
-        debug: 2,
+        debug: 1,
         config: {
           'iceServers': [
             { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' },
+            { urls: 'stun:stun2.l.google.com:19302' },
             { urls: 'stun:global.stun.twilio.com:3478' }
           ]
         }
@@ -155,10 +171,11 @@ const App: React.FC = () => {
       });
 
       peer.on('error', (err) => {
+        console.error("PeerJS Error:", err.type);
         setConnectionStatus('error');
         setErrorMsg(err.type);
         if (err.type === 'unavailable-id') {
-          alert("Este username já está ativo em outro lugar. Escolha outro.");
+          alert("Username já em uso. Escolha outro.");
           handleLogout();
         }
       });
@@ -173,10 +190,10 @@ const App: React.FC = () => {
     };
   }, [isLoggedIn, profile.username]);
 
-  // Heartbeat & Polling
+  // Heartbeat (15s) e Polling da lista (5s)
   useEffect(() => {
     if (isLoggedIn && profile.id) {
-      const hBeat = setInterval(() => syncRegistry('announce', profile.id), 20000);
+      const hBeat = setInterval(() => syncRegistry('announce', profile.id), 15000);
       const poll = setInterval(() => {
         if (activeTab === 'add-friends') syncRegistry('fetch');
       }, 5000);
@@ -247,10 +264,10 @@ const App: React.FC = () => {
         <Logo className="mb-10" size="lg" />
         <div className="w-full max-w-md glass p-10 rounded-[3rem] border border-white/5 animate-in">
           <form onSubmit={handleLogin} className="space-y-6">
-            <h2 className="text-[10px] font-bold text-center uppercase tracking-[0.5em] opacity-40">Ativar Nodo P2P</h2>
+            <h2 className="text-[10px] font-bold text-center uppercase tracking-[0.5em] opacity-40">Noir Peak Protocol</h2>
             <input required placeholder="Seu Nome" value={profile.name} onChange={e => setProfile({...profile, name: e.target.value})} className="w-full bg-zinc-900 border border-white/10 p-5 rounded-2xl text-white outline-none" />
-            <input required placeholder="Username Único (ex: luffy_77)" value={profile.username} onChange={e => setProfile({...profile, username: e.target.value.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()})} className="w-full bg-zinc-900 border border-white/10 p-5 rounded-2xl text-white outline-none font-mono" />
-            <button type="submit" className="w-full noir-button p-5 rounded-2xl font-black uppercase tracking-widest text-[11px]">Sincronizar</button>
+            <input required placeholder="Username (ex: kiko99)" value={profile.username} onChange={e => setProfile({...profile, username: e.target.value.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()})} className="w-full bg-zinc-900 border border-white/10 p-5 rounded-2xl text-white outline-none font-mono" />
+            <button type="submit" className="w-full noir-button p-5 rounded-2xl font-black uppercase tracking-widest text-[11px]">Acessar Rede</button>
           </form>
         </div>
       </div>
@@ -262,8 +279,7 @@ const App: React.FC = () => {
 
   return (
     <div className="h-screen w-full flex p-4 md:p-6 gap-4 md:gap-6 bg-black text-white overflow-hidden">
-      {/* Sidebar de Status Lateral (Mobile-friendly) */}
-      <nav className="w-16 md:w-24 glass rounded-[2.5rem] md:rounded-[3.5rem] flex flex-col items-center py-8 md:py-12 gap-6 md:gap-10 shrink-0 border border-white/5">
+      <nav className="w-16 md:w-24 glass rounded-[2.5rem] md:rounded-[3.5rem] flex flex-col items-center py-8 md:py-12 gap-6 md:gap-10 shrink-0 border border-white/5 shadow-2xl">
         <Logo size="sm" syncing={isSyncing} />
         <div className="flex flex-col gap-6 md:gap-8">
           {[
@@ -273,33 +289,32 @@ const App: React.FC = () => {
             <button 
               key={item.id} 
               onClick={() => setActiveTab(item.id as any)}
-              className={`p-4 md:p-5 rounded-[1.5rem] md:rounded-[2rem] transition-all relative ${activeTab === item.id ? 'bg-white text-black scale-110' : 'text-zinc-700 hover:text-white'}`}
+              className={`p-4 md:p-5 rounded-[1.5rem] md:rounded-[2rem] transition-all relative ${activeTab === item.id ? 'bg-white text-black scale-110 shadow-xl' : 'text-zinc-700 hover:text-white'}`}
             >
               <svg className="w-5 h-5 md:w-6 md:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="2.5" d={item.icon} /></svg>
-              {item.id === 'add-friends' && globalUsers.filter(u => u.id !== profile.id).length > 0 && <div className="absolute top-0 right-0 w-2 h-2 bg-green-500 rounded-full"></div>}
+              {item.id === 'add-friends' && globalUsers.filter(u => u.id !== profile.id).length > 0 && <div className="absolute top-0 right-0 w-2 h-2 bg-green-500 rounded-full border border-black animate-pulse"></div>}
             </button>
           ))}
         </div>
-        <button onClick={() => setActiveTab('settings')} className={`mt-auto p-4 md:p-5 rounded-[1.5rem] md:rounded-[2rem] transition-all ${activeTab === 'settings' ? 'bg-white text-black scale-110' : 'text-zinc-700 hover:text-white'}`}>
+        <button onClick={() => setActiveTab('settings')} className={`mt-auto p-4 md:p-5 rounded-[1.5rem] md:rounded-[2rem] transition-all ${activeTab === 'settings' ? 'bg-white text-black scale-110 shadow-xl' : 'text-zinc-700 hover:text-white'}`}>
           <svg className="w-5 h-5 md:w-6 md:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="2.5" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
         </button>
       </nav>
 
-      {/* Área Principal */}
       <div className="flex-1 flex gap-4 md:gap-6 overflow-hidden">
         {activeTab === 'chats' && (
-          <aside className="hidden lg:flex w-80 glass rounded-[3.5rem] p-8 flex-col shrink-0 border border-white/5 animate-in">
+          <aside className="hidden lg:flex w-80 glass rounded-[3.5rem] p-8 flex-col shrink-0 border border-white/5 animate-in shadow-xl">
             <div className="flex justify-between items-center mb-10">
               <h2 className="text-2xl font-black tracking-tighter">Nodos</h2>
               <div className="flex items-center gap-2">
                 <div className={`w-2 h-2 rounded-full ${connectionStatus === 'online' ? 'bg-green-500 shadow-[0_0_10px_green]' : connectionStatus === 'connecting' ? 'bg-yellow-500 animate-pulse' : 'bg-red-500'}`}></div>
-                <span className="text-[8px] uppercase font-bold opacity-30">{connectionStatus}</span>
+                <span className="text-[8px] uppercase font-bold opacity-30 tracking-widest">{connectionStatus}</span>
               </div>
             </div>
             <div className="flex-1 overflow-y-auto space-y-4 pr-2 custom-scrollbar">
               {contacts.map(c => (
                 <button key={c.id} onClick={() => setActiveId(c.id)} className={`w-full p-5 rounded-[2.5rem] flex items-center gap-4 transition-all ${activeId === c.id ? 'bg-white text-black' : 'hover:bg-white/5'}`}>
-                  <img src={c.avatar} className="w-10 h-10 rounded-xl object-cover" alt="" />
+                  <img src={c.avatar} className="w-10 h-10 rounded-xl object-cover bg-black/20" alt="" />
                   <div className="text-left overflow-hidden">
                     <p className="font-bold text-sm truncate">{c.name}</p>
                     <p className="text-[9px] opacity-40 truncate">@{c.username}</p>
@@ -316,35 +331,43 @@ const App: React.FC = () => {
               <h2 className="text-4xl md:text-6xl font-black tracking-tighter mb-12">Perfil</h2>
               <div className="space-y-12">
                 <div className="flex items-center gap-10">
-                  <img src={profile.avatar} className="w-24 h-24 rounded-[2rem] border-2 border-white/10" alt="" />
+                  <div className="relative">
+                    <img src={profile.avatar} className="w-24 h-24 md:w-32 md:h-32 rounded-[2rem] border-2 border-white/10" alt="" />
+                    <div className={`absolute -bottom-2 -right-2 w-6 h-6 rounded-full border-4 border-black ${connectionStatus === 'online' ? 'bg-green-500' : 'bg-red-500'}`}></div>
+                  </div>
                   <div>
-                    <h3 className="text-xl font-bold">{profile.name}</h3>
+                    <h3 className="text-xl md:text-2xl font-bold">{profile.name}</h3>
                     <p className="text-sm opacity-40 font-mono">@{profile.username}</p>
-                    <p className="text-[10px] mt-2 text-zinc-500 uppercase font-bold">Status: {connectionStatus.toUpperCase()} {errorMsg && `(${errorMsg})`}</p>
+                    {errorMsg && <p className="text-[8px] text-red-500 mt-2 font-mono uppercase">Erro: {errorMsg}</p>}
                   </div>
                 </div>
                 <div className="pt-10 border-t border-white/5 space-y-4">
-                  <button onClick={() => { syncRegistry('announce', profile.id); }} className="noir-button w-full p-5 rounded-2xl font-black uppercase text-[11px]">Forçar Re-sincronização</button>
-                  <button onClick={handleLogout} className="w-full p-5 rounded-2xl font-black uppercase text-[11px] border border-red-500/20 text-red-500 hover:bg-red-500/5 transition-all">Desconectar Nodo</button>
+                  <button onClick={() => { syncRegistry('announce', profile.id); }} className="noir-button w-full p-5 rounded-2xl font-black uppercase text-[11px] tracking-widest">Sincronizar Nodo</button>
+                  <button onClick={handleLogout} className="w-full p-5 rounded-2xl font-black uppercase text-[11px] tracking-widest border border-red-500/20 text-red-500 hover:bg-red-500/5 transition-all">Deslogar</button>
                 </div>
               </div>
             </div>
           ) : activeTab === 'add-friends' ? (
             <div className="flex-1 p-8 md:p-16 max-w-4xl mx-auto w-full overflow-y-auto custom-scrollbar animate-in">
-              <div className="mb-12">
-                <h2 className="text-4xl md:text-6xl font-black tracking-tighter">Explorar</h2>
-                <p className="text-[9px] font-bold uppercase tracking-[0.4em] text-zinc-500 mt-4">Perto de você no Noir Peak</p>
+              <div className="mb-12 flex justify-between items-end">
+                <div>
+                  <h2 className="text-4xl md:text-6xl font-black tracking-tighter">Explorar</h2>
+                  <p className="text-[9px] font-bold uppercase tracking-[0.4em] text-zinc-500 mt-4">Nodos ativos no Peak</p>
+                </div>
+                <button onClick={() => syncRegistry('fetch')} className="p-4 bg-white/5 rounded-full hover:bg-white/10 transition-all">
+                  <svg className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="3" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                </button>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {globalUsers.filter(u => u.id !== profile.id).length === 0 ? (
-                  <div className="col-span-full py-20 text-center border-2 border-dashed border-white/5 rounded-[3rem] opacity-20">
-                    <p className="uppercase tracking-widest text-[10px]">Aguardando outros nodos...</p>
-                    <p className="text-[9px] mt-2 italic">Dica: Use usernames diferentes para teste.</p>
+                  <div className="col-span-full py-24 text-center border-2 border-dashed border-white/5 rounded-[3rem] opacity-30">
+                    <p className="uppercase tracking-widest text-[10px] font-bold">Procurando sinais...</p>
+                    <p className="text-[9px] mt-2 italic">Dica: Use outro navegador ou celular com @username diferente.</p>
                   </div>
                 ) : (
                   globalUsers.filter(u => u.id !== profile.id).map(u => (
-                    <div key={u.id} className="glass p-6 rounded-[2.5rem] flex items-center justify-between border border-white/5 hover:bg-white/5 transition-all">
+                    <div key={u.id} className="glass p-6 rounded-[2.5rem] flex items-center justify-between border border-white/5 hover:bg-white/5 transition-all group">
                       <div className="flex items-center gap-4">
                         <img src={u.avatar} className="w-12 h-12 rounded-xl object-cover bg-black" alt="" />
                         <div>
@@ -352,7 +375,7 @@ const App: React.FC = () => {
                           <p className="text-[9px] opacity-40 font-mono">@{u.username}</p>
                         </div>
                       </div>
-                      <button onClick={() => { setContacts(p => [...p.filter(c => c.id !== u.id), { ...u, status: 'online' }]); setActiveId(u.id); setActiveTab('chats'); }} className="noir-button px-4 py-2 rounded-xl font-bold text-[9px] uppercase">Conectar</button>
+                      <button onClick={() => { setContacts(p => [...p.filter(c => c.id !== u.id), { ...u, status: 'online' }]); setActiveId(u.id); setActiveTab('chats'); }} className="noir-button px-5 py-2 rounded-xl font-bold text-[9px] uppercase tracking-widest opacity-0 group-hover:opacity-100 transition-all">Conectar</button>
                     </div>
                   ))
                 )}
@@ -361,37 +384,39 @@ const App: React.FC = () => {
           ) : activeId ? (
             <>
               <header className="h-24 md:h-32 flex items-center px-8 md:px-12 border-b border-white/5 shrink-0">
-                <img src={activeContact?.avatar} className="w-12 h-12 rounded-xl object-cover bg-black" alt="" />
+                <img src={activeContact?.avatar} className="w-12 h-12 md:w-14 md:h-14 rounded-xl object-cover bg-black" alt="" />
                 <div className="ml-4 md:ml-6">
                   <h2 className="text-lg md:text-xl font-black">{activeContact?.name}</h2>
                   <p className="text-[8px] font-bold uppercase tracking-widest text-green-500">P2P Sincronizado</p>
                 </div>
-                <button onClick={() => setActiveId(null)} className="ml-auto lg:hidden text-zinc-500">Voltar</button>
+                <button onClick={() => setActiveId(null)} className="ml-auto lg:hidden p-4 bg-white/5 rounded-2xl">
+                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="3" d="M10 19l-7-7m0 0l7-7m-7 7h18" /></svg>
+                </button>
               </header>
 
               <div className="flex-1 overflow-y-auto p-8 md:p-12 space-y-6 md:space-y-8 custom-scrollbar">
                 {currentChatMessages.map(m => (
                   <div key={m.id} className={`flex ${m.senderId === profile.id ? 'justify-end' : 'justify-start'} animate-in`}>
-                    <div className={`max-w-[85%] md:max-w-[70%] p-4 md:p-6 rounded-[1.5rem] md:rounded-[2.5rem] ${m.senderId === profile.id ? 'bg-white text-black rounded-tr-sm' : 'bg-zinc-900 text-white rounded-tl-sm border border-white/5'}`}>
-                      <p className="text-sm md:text-base font-medium">{m.text}</p>
+                    <div className={`max-w-[85%] md:max-w-[70%] p-4 md:p-6 rounded-[1.5rem] md:rounded-[2.5rem] shadow-xl ${m.senderId === profile.id ? 'bg-white text-black rounded-tr-sm' : 'bg-zinc-900 text-white rounded-tl-sm border border-white/5'}`}>
+                      <p className="text-sm md:text-base font-medium leading-relaxed">{m.text}</p>
                     </div>
                   </div>
                 ))}
               </div>
 
               <div className="p-8 md:p-12 pt-0 shrink-0">
-                <form onSubmit={sendMessage} className="glass rounded-[1.5rem] md:rounded-[2.5rem] p-2 flex items-center gap-2 border border-white/5">
+                <form onSubmit={sendMessage} className="glass rounded-[1.5rem] md:rounded-[2.5rem] p-2 flex items-center gap-2 border border-white/10">
                   <input value={inputValue} onChange={e => setInputValue(e.target.value)} placeholder="Sussurre algo..." className="flex-1 bg-transparent outline-none px-4 md:px-6 py-2 md:py-3 text-sm md:text-base" />
-                  <button type="submit" className="w-10 h-10 md:w-14 md:h-14 bg-white text-black rounded-xl md:rounded-2xl flex items-center justify-center hover:scale-105 transition-all">
+                  <button type="submit" className="w-10 h-10 md:w-14 md:h-14 bg-white text-black rounded-xl md:rounded-2xl flex items-center justify-center hover:scale-105 transition-all shadow-xl">
                     <svg className="w-5 h-5 md:w-6 md:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="3" d="M14 5l7 7m0 0l-7 7m7-7H3" /></svg>
                   </button>
                 </form>
               </div>
             </>
           ) : (
-            <div className="flex-1 flex flex-col items-center justify-center opacity-10 p-10 text-center">
+            <div className="flex-1 flex flex-col items-center justify-center opacity-10 p-10 text-center animate-in">
               <Logo size="lg" />
-              <p className="text-[9px] font-bold uppercase tracking-[0.5em] mt-8">Noir Protocol Ativado • Selecione um Nodo</p>
+              <p className="text-[9px] font-bold uppercase tracking-[0.5em] mt-8">Concord Noir Peak • Standby</p>
             </div>
           )}
         </main>
