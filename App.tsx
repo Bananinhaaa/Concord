@@ -4,8 +4,8 @@ import { Message, Contact, UserProfile } from './types';
 import Peer, { DataConnection } from 'peerjs';
 import { generateAIResponse } from './geminiService';
 
-// Novo ID de Registro (Atualizado para garantir persistência)
-const REGISTRY_ID = "1344465499252604928";
+// Novo ID de Registro e API mais estável
+const REGISTRY_ID = "1344485542841565184";
 const REGISTRY_API = `https://jsonblob.com/api/jsonBlob/${REGISTRY_ID}`;
 const NOTIFICATION_SOUND = 'https://assets.mixkit.co/active_storage/sfx/2358/2358-preview.mp3';
 
@@ -71,7 +71,7 @@ const App: React.FC = () => {
     audioRef.current = new Audio(NOTIFICATION_SOUND);
   }, []);
 
-  // Sincronização ultra-defensiva
+  // Sincronização resiliente com Fallback para Modo Local
   const syncRegistry = useCallback(async (action: 'announce' | 'fetch', myId?: string) => {
     if (isSyncing) return;
     setIsSyncing(true);
@@ -82,27 +82,24 @@ const App: React.FC = () => {
     };
 
     try {
-      // Tenta ler o registro
-      const getRes = await fetch(`${REGISTRY_API}?t=${Date.now()}`, { headers });
+      // Usando timeout para evitar que o fetch trave a aplicação
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
+
+      const getRes = await fetch(`${REGISTRY_API}?t=${Date.now()}`, { 
+        headers,
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
       
-      if (!getRes.ok) {
-         // Se o registro não existir, tenta criar um novo com a lista vazia
-         if (getRes.status === 404) {
-            await fetch(`https://jsonblob.com/api/jsonBlob`, {
-               method: 'POST',
-               headers,
-               body: JSON.stringify({ users: [] })
-            });
-         }
-         throw new Error(`Servidor indisponível (${getRes.status})`);
-      }
+      if (!getRes.ok) throw new Error(`Status ${getRes.status}`);
       
       const data = await getRes.json();
       let users = Array.isArray(data.users) ? data.users : [];
       const now = Date.now();
 
-      // Expira usuários inativos (3 minutos para ser mais tolerante)
-      users = users.filter((u: any) => (now - (u.lastSeen || 0)) < 180000);
+      // Expira usuários após 5 minutos para reduzir tráfego
+      users = users.filter((u: any) => (now - (u.lastSeen || 0)) < 300000);
 
       if (action === 'announce' && myId && profile.username) {
         users = users.filter((u: any) => u.username !== profile.username && u.id !== myId);
@@ -115,25 +112,22 @@ const App: React.FC = () => {
           lastSeen: now
         });
 
-        const putRes = await fetch(REGISTRY_API, {
+        await fetch(REGISTRY_API, {
           method: 'PUT',
           headers,
           body: JSON.stringify({ users })
         });
         
-        if (putRes.ok) {
-          setConnectionStatus('online');
-          setErrorMsg('');
-        }
+        setConnectionStatus('online');
+        setErrorMsg('');
       }
 
       setGlobalUsers(users);
     } catch (e: any) {
-      console.warn("Sync Warning:", e.message);
-      // Não trava a UI, apenas loga e marca como erro de sinal
+      console.warn("Registry Sync unavailable, switching to local mode:", e.message);
       if (action === 'announce') {
-        setConnectionStatus('error');
-        setErrorMsg('Sinal fraco...');
+        setConnectionStatus('offline');
+        setErrorMsg('Modo Local (P2P Ativo)');
       }
     } finally {
       setIsSyncing(false);
@@ -146,7 +140,7 @@ const App: React.FC = () => {
       const peerId = `concord_${profile.username.toLowerCase()}`;
       
       const peer = new Peer(peerId, {
-        debug: 2,
+        debug: 1, // Reduzido debug para performance no mobile
         config: {
           'iceServers': [
             { urls: 'stun:stun.l.google.com:19302' },
@@ -184,13 +178,10 @@ const App: React.FC = () => {
       });
 
       peer.on('error', (err) => {
-        setConnectionStatus('error');
-        if (err.type === 'browser-incompatible') {
-          setErrorMsg('Navegador bloqueia P2P');
-        } else if (err.type === 'unavailable-id') {
-          setErrorMsg('Username em uso');
-        } else {
-          setErrorMsg(err.type);
+        console.error("Peer Error:", err.type);
+        if (err.type !== 'peer-unavailable') { // Ignora erros comuns de busca
+            setConnectionStatus('error');
+            setErrorMsg(err.type === 'unavailable-id' ? 'Username em uso' : 'Erro de Sinal');
         }
       });
 
@@ -206,10 +197,10 @@ const App: React.FC = () => {
 
   useEffect(() => {
     if (isLoggedIn && profile.id) {
-      const hBeat = setInterval(() => syncRegistry('announce', profile.id), 20000);
+      const hBeat = setInterval(() => syncRegistry('announce', profile.id), 30000);
       const poll = setInterval(() => {
         if (activeTab === 'add-friends') syncRegistry('fetch');
-      }, 8000);
+      }, 10000);
       return () => { clearInterval(hBeat); clearInterval(poll); };
     }
   }, [isLoggedIn, profile.id, activeTab, syncRegistry]);
@@ -351,12 +342,12 @@ const App: React.FC = () => {
                   <div>
                     <h3 className="text-xl md:text-2xl font-bold">{profile.name}</h3>
                     <p className="text-sm opacity-40 font-mono">@{profile.username}</p>
-                    {errorMsg && <p className="text-[10px] text-red-500 mt-2 font-bold uppercase tracking-widest animate-pulse">Status: {errorMsg}</p>}
+                    {errorMsg && <p className="text-[10px] text-zinc-500 mt-2 font-bold uppercase tracking-widest">{errorMsg}</p>}
                   </div>
                 </div>
                 <div className="pt-10 border-t border-white/5 space-y-4">
-                  <button onClick={() => { syncRegistry('announce', profile.id); }} className="noir-button w-full p-5 rounded-2xl font-black uppercase text-[11px] tracking-widest">Forçar Sync</button>
-                  <button onClick={handleLogout} className="w-full p-5 rounded-2xl font-black uppercase text-[11px] tracking-widest border border-red-500/20 text-red-500 hover:bg-red-500/5 transition-all">Sair</button>
+                  <button onClick={() => { syncRegistry('announce', profile.id); }} className="noir-button w-full p-5 rounded-2xl font-black uppercase text-[11px] tracking-widest">Sincronizar Rede</button>
+                  <button onClick={handleLogout} className="w-full p-5 rounded-2xl font-black uppercase text-[11px] tracking-widest border border-red-500/20 text-red-500 hover:bg-red-500/5 transition-all">Sair do Nodo</button>
                 </div>
               </div>
             </div>
@@ -365,7 +356,7 @@ const App: React.FC = () => {
               <div className="mb-12 flex justify-between items-end">
                 <div>
                   <h2 className="text-4xl md:text-6xl font-black tracking-tighter">Explorar</h2>
-                  <p className="text-[9px] font-bold uppercase tracking-[0.4em] text-zinc-500 mt-4">Procurando nodos no Peak...</p>
+                  <p className="text-[9px] font-bold uppercase tracking-[0.4em] text-zinc-500 mt-4">Escaneando sinais próximos...</p>
                 </div>
                 <button onClick={() => syncRegistry('fetch')} className="p-4 bg-white/5 rounded-full hover:bg-white/10 transition-all">
                   <svg className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="3" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
@@ -375,8 +366,8 @@ const App: React.FC = () => {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {globalUsers.filter(u => u.id !== profile.id).length === 0 ? (
                   <div className="col-span-full py-24 text-center border-2 border-dashed border-white/5 rounded-[3rem] opacity-30">
-                    <p className="uppercase tracking-widest text-[10px] font-bold">Nenhum sinal encontrado</p>
-                    <p className="text-[9px] mt-2 italic">Dica: Use outro dispositivo ou aba com outro username.</p>
+                    <p className="uppercase tracking-widest text-[10px] font-bold">Nenhum sinal no vácuo</p>
+                    <p className="text-[9px] mt-2 italic">Acesse em outro navegador para testar o P2P.</p>
                   </div>
                 ) : (
                   globalUsers.filter(u => u.id !== profile.id).map(u => (
@@ -400,7 +391,7 @@ const App: React.FC = () => {
                 <img src={activeContact?.avatar} className="w-12 h-12 md:w-14 md:h-14 rounded-xl object-cover bg-black" alt="" />
                 <div className="ml-4 md:ml-6">
                   <h2 className="text-lg md:text-xl font-black">{activeContact?.name}</h2>
-                  <p className="text-[8px] font-bold uppercase tracking-widest text-green-500">P2P Ativo</p>
+                  <p className="text-[8px] font-bold uppercase tracking-widest text-green-500">Fluxo P2P Estável</p>
                 </div>
                 <button onClick={() => setActiveId(null)} className="ml-auto lg:hidden p-4 bg-white/5 rounded-2xl">
                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="3" d="M10 19l-7-7m0 0l7-7m-7 7h18" /></svg>
@@ -429,7 +420,7 @@ const App: React.FC = () => {
           ) : (
             <div className="flex-1 flex flex-col items-center justify-center opacity-10 p-10 text-center animate-in">
               <Logo size="lg" />
-              <p className="text-[9px] font-bold uppercase tracking-[0.5em] mt-8">Noir Peak • Standby</p>
+              <p className="text-[9px] font-bold uppercase tracking-[0.5em] mt-8">Noir Peak • Protocolo Standby</p>
             </div>
           )}
         </main>
